@@ -179,3 +179,56 @@ def test_no_auth_without_base_url_uses_stored(fake_db):
     with pytest.raises(ValueError, match="免鉴权模式必须填接口地址"):
         uc.set_credential(19, "ollama", "", base_url_override=None, allow_base_url=True,
                           auth_mode="none")
+
+
+# ── 空 key + keep_key:只改地址 / 代理,不删凭据(iOS「留空则保留现有」)───────────
+
+
+def _route_real_set_credential(monkeypatch, fake_db, body, *, role="user"):
+    """路由 → 真实 set_credential → 假库。delete_credential 换成记录器(它自己的 SQL 不在假库预期里)。"""
+    from platform_app import user_credentials as uc
+    from platform_app.api import me as me_api
+    deleted: list = []
+    monkeypatch.setattr(uc, "delete_credential",
+                        lambda uid, api_id: deleted.append((uid, api_id)) or {"ok": True, "deleted": True})
+    resp = asyncio.run(me_api.api_set_credential(_JsonRequest(body), user={"id": 19, "role": role}))
+    return resp, deleted
+
+
+def test_empty_key_with_keep_key_updates_meta_not_delete(monkeypatch, fake_db):
+    """iOS 已配 key 的供应商只改 Base URL / 代理:空 key + keep_key → 只更新元数据,密钥不删。"""
+    log, _ = fake_db
+    resp, deleted = _route_real_set_credential(monkeypatch, fake_db, {
+        "api_id": "openai", "api_key": "", "keep_key": True, "enabled": True,
+        "base_url_override": "", "proxy": "",
+    })
+    assert resp.status_code == 200, json.loads(resp.body)
+    assert deleted == [], "空 key + keep_key 把凭据删了"
+    assert any(s.startswith("update user_api_credentials") for s, _ in log), "keep_key 应只更新元数据"
+    assert not any(s.startswith("insert into user_api_credentials") for s, _ in log)
+
+
+def test_empty_key_without_keep_key_still_deletes(monkeypatch, fake_db):
+    """对照:不带 keep_key 的空 key 仍是删除语义(手机端 / 设置页「删除密钥」依赖它)。"""
+    resp, deleted = _route_real_set_credential(monkeypatch, fake_db, {
+        "api_id": "openai", "api_key": "", "enabled": True, "base_url_override": "", "proxy": "",
+    })
+    assert resp.status_code == 200
+    assert deleted == [(19, "openai")]
+
+
+def test_ios_blank_key_save_sends_keep_key():
+    """iOS 供应商详情页的 Key 框写着「留空则保留现有」,只改地址 / 代理时请求体里 key 为空。
+    以前不带 keep_key,后端按「空 key = 删除」把密钥删了,界面却显示「已保存」。
+    iOS 没有单测工程,这里锁源码:setCredential 能带 keep_key,详情页的保存按已配置与否传它。"""
+    import pathlib
+    import re
+    ios = pathlib.Path(__file__).resolve().parents[3] / "ios" / "Sources"
+    api_src = (ios / "API.swift").read_text(encoding="utf-8")
+    fn = api_src[api_src.index("func setCredential("):]
+    fn = fn[:fn.index("\n    func ", 10)]
+    assert re.search(r'body\["keep_key"\]\s*=\s*true', fn), "iOS setCredential 不会带 keep_key"
+    view = (ios / "Views" / "ModelsView.swift").read_text(encoding="utf-8")
+    save = view[view.index("private func save() async"):]
+    save = save[:save.index("private func test() async")]
+    assert "keepKey:" in save, "iOS 详情页保存没按「已配置 + 空 key」传 keepKey"

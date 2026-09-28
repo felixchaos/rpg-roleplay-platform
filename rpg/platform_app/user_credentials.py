@@ -382,6 +382,12 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
         # 先清旧 key 的远程模型缓存,再强制重拉:绝不能命中改 key 前「校验连接/拉取模型」
         # 写满的旧 key 60s 缓存,否则会把旧 key 的模型写进 overlay(issue #22 根因之一)。
         invalidate_user_api(user_id, api_id)
+        if not enabled:
+            # 停用的凭据(模型页关掉了这个供应商,再在「编辑供应商」里重填 key)不拿来拉模型:
+            # 拉取入口判断「有没有凭据」时本来就跳过停用的行,必然失败,再走下面的失败分支就会
+            # 把用户这个供应商下改过名、隐藏过的模型整个清空。停用 ≠ key 换坏了;重新打开开关
+            # 后,设置页的自动同步会用新 key 重拉。
+            return result
         sync_result = list_remote_models(api_id, user_id=user_id, force_refresh=True)
         if sync_result.get("ok") and sync_result.get("models"):
             replace_synced_models(user_id, api_id, sync_result["models"])

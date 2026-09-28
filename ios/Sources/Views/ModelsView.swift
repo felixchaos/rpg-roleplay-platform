@@ -333,13 +333,20 @@ struct ProviderDetailView: View {
     }
 
     private func save() async {
-        err = nil; testMsg = nil; saving = true
+        err = nil; testMsg = nil
+        let key = apiKey.trimmingCharacters(in: .whitespaces)
+        // Key 框留空:已配置的供应商 = 保留现有密钥、只改地址 / 代理(必须带 keep_key,
+        // 否则后端把空 key 当成删除);还没配置的供应商没有可保留的密钥,直接提示先填。
+        let hasStoredKey = cred?.configured == true
+        if key.isEmpty && !hasStoredKey { err = tr("请先填写 API Key"); return }
+        saving = true
         defer { saving = false }
         do {
             try await store.api.setCredential(base: store.serverURL, apiId: provider.id,
-                key: apiKey.trimmingCharacters(in: .whitespaces),
+                key: key,
                 baseURL: baseURL.trimmingCharacters(in: .whitespaces),
-                proxy: proxy.trimmingCharacters(in: .whitespaces))
+                proxy: proxy.trimmingCharacters(in: .whitespaces),
+                keepKey: key.isEmpty && hasStoredKey)
             apiKey = ""
             onChanged()
             testMsg = "已保存"; testOK = true

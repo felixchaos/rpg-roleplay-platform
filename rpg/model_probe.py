@@ -798,6 +798,63 @@ def _list_openai_compat_models(api: dict[str, Any], user_id: int | None = None) 
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  拉远端清单用的 provider 元数据(同步 / 校验共用)
+# ══════════════════════════════════════════════════════════════════════
+def remote_list_api_meta(
+    api_id: str, user_id: int | None, *, base_url_hint: str = "",
+) -> tuple[dict[str, Any] | None, str]:
+    """给 list_remote_models 的 api_override 合成 provider 元数据,不写全局目录。
+
+    来源:全局目录 > default_api 模板 > 用户凭据里的 base_url_override(自建中转站)。
+    base_url:用户凭据的覆盖地址优先,其次 base_url_hint(调用方请求体),最后目录默认 ——
+    与生成路径(openai_compat backend 的 effective_base)一致。全局目录里没有的 provider 按
+    openai_compat 路由,且必须有地址。返回 (meta, error);error 非空时 meta 为 None。
+
+    POST /api/models/remote/sync 与 diff_catalog(「校验连接」)共用这一份。以前只有同步会合成,
+    校验对中转站不带 api_override,全局目录里找不到 → 「api_id 不存在」,只有碰上同一进程 60s 内的
+    缓存才能成功(多 worker 下基本都失败)。
+    """
+    from model_registry import default_api_for, find_api, load_model_catalog
+
+    catalog = load_model_catalog()
+    api = find_api(catalog, api_id) or {}
+    default_api = default_api_for(api_id) or {}
+    meta_api = {**default_api, **api}
+    # 用户凭证里的 base_url_override 是「把内置 provider(如 OpenAI)指向自建中转站」的权威意图,
+    # 必须**优先**于 body / catalog 默认。否则:普通用户的 base_url 被 _redact_catalog 抹成空、
+    # 前端 body 传空 → 这里回退到 catalog 官方端点(api.openai.com),拿用户中转站的 key 打官方
+    # → 永远「不可访问」,拉到的也不是中转站的真实模型(用户反馈:拉取的模型不对)。
+    # base_url_override 在 set_credential 落库时已做 SSRF 校验(强制公网 https),这里再校验一次也会通过。
+    cred_base = ""
+    try:
+        from platform_app.user_credentials import get_credential
+        _cred = get_credential(user_id, api_id) if user_id else None
+        cred_base = (_cred or {}).get("base_url_override") or ""
+    except Exception:
+        cred_base = ""
+    base_url = cred_base or base_url_hint or meta_api.get("base_url", "")
+    # SEC(H-2): base_url_hint 由请求方控制,过去直接进 OpenAI client → SSRF 打内网/云元数据。
+    # 解析 host→IP 校验,拒私网/保留地址(catalog/已存凭证的公网 base_url 会正常通过)。
+    if base_url:
+        try:
+            from platform_app.user_credentials import _validate_base_url
+            _validate_base_url(base_url)
+        except ValueError as exc:
+            return None, str(exc)
+    # 全局没这个 provider(自建中转站)→ 必须有 base_url 才能调,且按 openai_compat 路由
+    if not api and not base_url:
+        return None, f"未知 provider「{api_id}」需先在凭证里填写 base_url"
+    kind = meta_api.get("kind") or ("openai_compat" if base_url else api_id)
+    return {
+        "id": api_id,
+        "display_name": meta_api.get("display_name") or api_id,
+        "kind": kind,
+        "credential_env": meta_api.get("credential_env", ""),
+        "base_url": base_url,
+    }, ""
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  本地 catalog vs 远端 diff
 # ══════════════════════════════════════════════════════════════════════
 def diff_catalog(api_id: str, user_id: int | None = None, *, user_view: bool = False) -> dict[str, Any]:
@@ -807,14 +864,25 @@ def diff_catalog(api_id: str, user_id: int | None = None, *, user_view: bool = F
     user_view=True(普通用户):本地 = 该用户自己看到的清单(全局目录 + 他的 overlay)。普通用户
     改不了全局目录,拿全局目录比出来的「新增 / 下线」对他既不真实也无从操作 —— 设置页一打开就
     自动同步,远端模型早已在他自己的清单里,旧实现却每次都报「新增 N 个」,点「全部添加」全 403。
-    全局目录里没有的 provider(用户自建中转站)只存在于用户视图,两种模式都退到用户视图比。
+    全局目录里没有的 provider(用户自建中转站)只存在于用户视图,两种模式都退到用户视图比;
+    拉远端清单时按 remote_list_api_meta 从用户凭据合成元数据(与同步同一份)。
+
+    响应的 base 如实标出这次比的是谁:'catalog' = 全局目录,'user' = 用户自己的清单。前端据它
+    决定「全部添加」写全局目录还是重新同步自己的清单、「删除」删目录条目还是自己的模型。
     """
-    remote = list_remote_models(api_id, user_id=user_id)
-    if not remote["ok"]:
-        return {"ok": False, "error": remote.get("error"), "api_id": api_id}
     import model_registry as _mr
     catalog = _mr.load_model_catalog()
-    api = None if user_view else _mr.find_api(catalog, api_id)
+    in_catalog = _mr.find_api(catalog, api_id)
+    api_override = None
+    if not in_catalog:
+        api_override, meta_err = remote_list_api_meta(api_id, user_id)
+        if api_override is None:
+            return {"ok": False, "error": meta_err, "api_id": api_id}
+    remote = list_remote_models(api_id, user_id=user_id, api_override=api_override)
+    if not remote["ok"]:
+        return {"ok": False, "error": remote.get("error"), "api_id": api_id}
+    api = None if user_view else in_catalog
+    base = "catalog" if api is not None else "user"
     if api is None and user_id:
         api = _mr.find_api(_mr.apply_user_overlay(catalog, user_id), api_id)
     if not api:
@@ -826,7 +894,7 @@ def diff_catalog(api_id: str, user_id: int | None = None, *, user_view: bool = F
     return {
         "ok": True,
         "api_id": api_id,
-        "base": "user" if user_view else "catalog",
+        "base": base,
         "local_only": sorted(local_ids - remote_ids),   # catalog 里有但远端没有（可能下线）
         "remote_only": sorted(remote_ids - local_ids),  # 远端有但 catalog 没注册
         "matching": sorted(local_ids & remote_ids),

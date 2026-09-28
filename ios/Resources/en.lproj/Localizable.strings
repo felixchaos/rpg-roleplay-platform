@@ -602,3 +602,4 @@
 "主线、目标、事实与笔记" = "Quest, objective, facts & notes";
 "能力与资源" = "Abilities & resources";
 "关闭某一桶后,每轮的记忆注入里不再包含这一类。" = "When a bucket is off, that type is no longer included in the per-turn memory injection.";
+"请先填写 API Key" = "Enter an API key first";

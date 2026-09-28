@@ -159,6 +159,27 @@ class TestCredentialOverlaySync(unittest.TestCase):
         user_credentials.delete_credential(self.uid, "deepseek")
         self.assertNotIn(ck, model_probe._LIST_CACHE, "删 key 后远程模型缓存必须被失效")
 
+    def test_disabled_resave_keeps_renamed_overlay(self):
+        """模型页关掉供应商后在「编辑供应商」里重填 key(前端带 enabled:false):停用的凭据拉不到
+        模型,不能因此走「新 key 列不出 → 清空」把用户改过名的模型整个清掉。"""
+        import model_probe
+        from platform_app import user_credentials
+        from platform_app.user_models import load_overlay, set_overlay_model_display_name
+        self._seed_overlay()
+        self.assertEqual(set_overlay_model_display_name(self.uid, "deepseek", "old-model-a", "主力"), 1)
+        orig = model_probe.list_remote_models
+        # 与真实行为一致:拉取入口跳过停用的凭据 → 失败
+        model_probe.list_remote_models = lambda *a, **k: {"ok": False, "error": "需要先配置", "models": []}
+        try:
+            user_credentials.set_credential(self.uid, "deepseek", "sk-new-key-xyz", enabled=False)
+        finally:
+            model_probe.list_remote_models = orig
+        overlay = load_overlay(self.uid)
+        self.assertIn("deepseek", overlay, "停用态重填 key 把用户的模型清单清空了")
+        names = {(m.get("real_name") or m.get("id")): m.get("display_name") for m in overlay["deepseek"]}
+        self.assertEqual(names.get("old-model-a"), "主力", "改过的显示名丢了")
+        self.assertIn("old-model-b", names)
+
 
 if __name__ == "__main__":
     unittest.main()

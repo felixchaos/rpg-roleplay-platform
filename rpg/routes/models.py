@@ -435,13 +435,7 @@ def _remote_sync_blocking(api_user: dict[str, Any], user_id: int, body: Any) -> 
     """/api/models/remote/sync 的同步主体(在线程里执行,见路由注释)。"""
     import model_probe
     from app import _check_probe_permission
-    from model_registry import (
-        default_api_for,
-        find_api,
-        load_catalog_for_user,
-        load_model_catalog,
-        normalize_api_id,
-    )
+    from model_registry import load_catalog_for_user, normalize_api_id
     from platform_app import user_models
 
     api_id = normalize_api_id((body or {}).get("api_id", ""))
@@ -451,48 +445,14 @@ def _remote_sync_blocking(api_user: dict[str, Any], user_id: int, body: Any) -> 
     if blocked:
         return blocked
 
-    # provider 元数据解析(不写全局):全局菜单 > default_api 模板 > 用户自建中转站凭证。
-    catalog = load_model_catalog()
-    api = find_api(catalog, api_id) or {}
-    default_api = default_api_for(api_id) or {}
-    meta_api = {**default_api, **api}
-    # 用户凭证里的 base_url_override 是「把内置 provider(如 OpenAI)指向自建中转站」的权威意图,
-    # 必须**优先**于 body / catalog 默认。否则:普通用户的 base_url 被 _redact_catalog 抹成空、
-    # 前端 body 传空 → 这里回退到 catalog 官方端点(api.openai.com),拿用户中转站的 key 打官方
-    # → 永远「不可访问」,拉到的也不是中转站的真实模型(用户反馈:拉取的模型不对)。
-    # 与生成路径一致(openai_compat.py 早已 base_url_override 优先)。base_url_override 在
-    # set_credential 落库时已做 SSRF 校验(强制公网 https),这里再校验一次也会通过。
-    cred_base = ""
-    try:
-        from platform_app.user_credentials import get_credential
-        _cred = get_credential(user_id, api_id)
-        cred_base = (_cred or {}).get("base_url_override") or ""
-    except Exception:
-        cred_base = ""
-    base_url = cred_base or (body or {}).get("base_url") or meta_api.get("base_url", "")
-    # SEC(H-2): body.base_url 由请求方控制,过去直接进 OpenAI client → SSRF 打内网/云元数据。
-    # 解析 host→IP 校验,拒私网/保留地址(catalog/已存凭证的公网 base_url 会正常通过)。
-    if base_url:
-        try:
-            from platform_app.user_credentials import _validate_base_url
-            _validate_base_url(base_url)
-        except ValueError as exc:
-            return json_response({"ok": False, "error": str(exc), "models": []}, status_code=400)
-    # 全局没这个 provider(自建中转站)→ 必须有 base_url 才能调,且按 openai_compat 路由
-    kind = meta_api.get("kind") or ("openai_compat" if base_url else api_id)
-    if not api and not base_url:
-        return json_response(
-            {"ok": False, "error": f"未知 provider「{api_id}」需先在凭证里填写 base_url", "models": []},
-            status_code=400,
-        )
-
-    api_meta = {
-        "id": api_id,
-        "display_name": meta_api.get("display_name") or api_id,
-        "kind": kind,
-        "credential_env": meta_api.get("credential_env", ""),
-        "base_url": base_url,
-    }
+    # provider 元数据解析(不写全局):全局菜单 > default_api 模板 > 用户自建中转站凭证;
+    # base_url 用户凭据的覆盖地址优先于 body / 目录默认,并过 SSRF 校验。与「校验连接」
+    # (diff_catalog)共用 model_probe.remote_list_api_meta,别在这里另写一份。
+    api_meta, meta_err = model_probe.remote_list_api_meta(
+        api_id, user_id, base_url_hint=(body or {}).get("base_url") or "",
+    )
+    if api_meta is None:
+        return json_response({"ok": False, "error": meta_err, "models": []}, status_code=400)
 
     remote = model_probe.list_remote_models(
         api_id,

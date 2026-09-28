@@ -41,30 +41,70 @@ MOBILE_SETTINGS_JSX = "\n".join(
 
 
 class SyncEndpointPrefersCredentialOverride(unittest.TestCase):
+    """解析链住在 model_probe.remote_list_api_meta(同步与「校验连接」共用),按行为锁:
+    凭据覆盖地址 > 请求体 base_url > 目录默认,最终地址过 SSRF 校验。"""
+
+    def _meta(self, *, cred_base="", hint="", catalog_api=None, validator=None):
+        import sys
+        from unittest.mock import patch
+        sys.path.insert(0, str(PROJECT / "rpg"))
+        import model_probe
+        checked = []
+        with patch("model_registry.load_model_catalog", return_value={"apis": []}), \
+             patch("model_registry.find_api", return_value=catalog_api), \
+             patch("model_registry.default_api_for", return_value={}), \
+             patch("platform_app.user_credentials.get_credential",
+                   return_value={"base_url_override": cred_base} if cred_base else None), \
+             patch("platform_app.user_credentials._validate_base_url",
+                   side_effect=validator or (lambda url: checked.append(url))):
+            meta, err = model_probe.remote_list_api_meta("openai", 7, base_url_hint=hint)
+        return meta, err, checked
+
+    _OFFICIAL = {"id": "openai", "kind": "openai", "base_url": "https://api.openai.com/v1"}
+
     def test_base_url_override_has_priority(self):
-        """cred_base(base_url_override)必须排在 base_url 解析链最前面。"""
-        # 解析行形如:  base_url = cred_base or (body or {}).get("base_url") or meta_api.get("base_url", "")
-        self.assertRegex(
-            MODELS_PY,
-            r"base_url\s*=\s*cred_base\s+or\s+\(body[^\n]*\)\.get\(\"base_url\"\)\s+or\s+meta_api\.get\(\"base_url\"",
-            "sync 端点必须 `base_url = cred_base or body... or catalog...`(override 优先)",
-        )
+        """cred_base(base_url_override)排在解析链最前面:官方默认非空也压不住它。"""
+        meta, err, _ = self._meta(cred_base="https://relay.example.com/v1",
+                                  hint="https://body.example.com/v1", catalog_api=self._OFFICIAL)
+        self.assertEqual(err, "")
+        self.assertEqual(meta["base_url"], "https://relay.example.com/v1")
+
+    def test_body_then_catalog_default(self):
+        meta, _, _ = self._meta(hint="https://body.example.com/v1", catalog_api=self._OFFICIAL)
+        self.assertEqual(meta["base_url"], "https://body.example.com/v1")
+        meta, _, _ = self._meta(catalog_api=self._OFFICIAL)
+        self.assertEqual(meta["base_url"], "https://api.openai.com/v1")
 
     def test_old_fallback_only_pattern_is_gone(self):
         """旧的「仅当 body 为空才兜底 cred」反模式必须删除,否则官方端点(非空)永远赢。"""
-        self.assertNotRegex(
-            MODELS_PY,
-            r"if\s+not\s+base_url\s*:\s*\n\s*base_url\s*=\s*cred_base",
-            "旧反模式 `if not base_url: base_url = cred_base` 仍在 → override 会被官方默认压住",
-        )
+        for src in (MODELS_PY, MODEL_PROBE_PY):
+            self.assertNotRegex(
+                src,
+                r"if\s+not\s+base_url\s*:\s*\n\s*base_url\s*=\s*cred_base",
+                "旧反模式 `if not base_url: base_url = cred_base` 仍在 → override 会被官方默认压住",
+            )
 
-    def test_cred_base_still_read_from_credential(self):
-        """仍然从用户凭证读取 base_url_override(权威来源)。"""
-        self.assertIn('cred_base = (_cred or {}).get("base_url_override") or ""', MODELS_PY)
+    def test_sync_route_uses_shared_resolver(self):
+        """同步端点不再自己拼一份(另一份在校验连接里漏了中转站)。"""
+        self.assertIn("remote_list_api_meta(", MODELS_PY)
 
     def test_ssrf_validation_retained(self):
-        """最终 base_url 仍过 _validate_base_url(override 在落库时已校验为公网,这里也会通过)。"""
-        self.assertIn("_validate_base_url(base_url)", MODELS_PY)
+        """最终 base_url 仍过 _validate_base_url;校验不过 → 返回错误,不给元数据。"""
+        _, _, checked = self._meta(cred_base="https://relay.example.com/v1", catalog_api=self._OFFICIAL)
+        self.assertEqual(checked, ["https://relay.example.com/v1"])
+
+        def _reject(url):
+            raise ValueError("base_url 不允许指向内网")
+        meta, err, _ = self._meta(hint="http://169.254.169.254/", catalog_api=None, validator=_reject)
+        self.assertIsNone(meta)
+        self.assertIn("内网", err)
+
+    def test_unknown_provider_needs_base_url(self):
+        meta, err, _ = self._meta(catalog_api=None)
+        self.assertIsNone(meta)
+        self.assertIn("base_url", err)
+        meta, _, _ = self._meta(cred_base="https://relay.example.com/v1", catalog_api=None)
+        self.assertEqual(meta["kind"], "openai_compat")
 
 
 class RemoteListProbeHonorsOverride(unittest.TestCase):

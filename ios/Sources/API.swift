@@ -505,12 +505,14 @@ final class API {
         return (try? JSONDecoder().decode(CredListResponse.self, from: data))?.items ?? []
     }
 
-    /// 设置/更新某 provider 的 API key(空 key + 空 base_url = 仅更新开关/代理)。
-    func setCredential(base: String, apiId: String, key: String, baseURL: String, proxy: String, enabled: Bool = true) async throws {
+    /// 设置/更新某 provider 的 API key。
+    /// keepKey:key 为空时保留已存密钥,只更新地址 / 代理 / 开关。不带它时后端把「空 key」当成删除凭据。
+    func setCredential(base: String, apiId: String, key: String, baseURL: String, proxy: String, enabled: Bool = true, keepKey: Bool = false) async throws {
         // 地址与代理两个键总是带上:后端对它们是「带了才改(空串 = 清空)、没带 = 保留已存值」。
         // 这里的表单预填了已存值,输入框里是什么就是用户要的状态;空的时候不带,就清不掉旧地址 / 旧代理。
-        let body: [String: Any] = ["api_id": apiId, "api_key": key, "enabled": enabled,
+        var body: [String: Any] = ["api_id": apiId, "api_key": key, "enabled": enabled,
                                    "base_url_override": baseURL, "proxy": proxy]
+        if keepKey && key.isEmpty { body["keep_key"] = true }
         let req = try request(base, "/api/me/credentials", method: "POST", json: body)
         let (data, resp) = try await session.data(for: req)
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
