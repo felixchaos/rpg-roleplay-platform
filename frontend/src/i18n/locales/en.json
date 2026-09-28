@@ -2158,7 +2158,7 @@
         "add_title": "New KB entry",
         "add_confirm": "Create",
         "add_ok": "KB entry created",
-        "add_required": "logical_key and name are required",
+        "add_required": "Please enter a name",
         "deleted": "KB entry deleted",
         "confirm_delete": "Confirm delete?",
         "view_detail": "Detail",
@@ -2173,6 +2173,7 @@
         "type_all": "All",
         "type_character": "Character",
         "type_faction": "Faction",
+        "type_organization": "Organization",
         "type_location": "Location",
         "type_item": "Item",
         "type_concept": "Concept",
@@ -2183,6 +2184,7 @@
         "col_importance": "Importance",
         "col_summary": "Summary",
         "field_logical_key": "Logical Key",
+        "field_logical_key_ph": "Leave blank to auto-generate",
         "field_name": "Name",
         "field_name_ph": "Character / faction name",
         "field_type": "Type",
@@ -3990,7 +3992,8 @@
       "event": "Event",
       "faction": "Faction",
       "item": "Item",
-      "location": "Location"
+      "location": "Location",
+      "organization": "Organization"
     },
     "chapter_prefix": "Ch.{{index}}",
     "confirm": {

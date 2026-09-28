@@ -42,7 +42,9 @@ async function patchCanon(scriptId, body) {
     method: 'PATCH', credentials: 'include',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
-  return r.json();
+  // 后端异常时可能回纯文本:别让 r.json() 抛成未处理的 rejection(按钮点了没反应),
+  // 退成 {ok:false,error} 走页面已有的报错展示。
+  return r.json().catch(() => ({ ok: false, error: `${r.status} ${r.statusText || ''}`.trim() }));
 }
 
 function ReviewFlags({ flags }) {

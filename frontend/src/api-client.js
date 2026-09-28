@@ -558,12 +558,17 @@
       worldbookDelete: (sid, eid) => DEL(`${API_PREFIX}/scripts/${sid}/worldbook/${eid}`, {}),
       // 批量:body={entry_ids:[...], action:'delete'|'enable'|'disable'|'set_priority', priority?}
       worldbookBatch: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/worldbook/batch`, body),
-      // canon 实体(MD 编辑器):list/get 读 + upsert(有 logical_key → PUT,否则 POST)/delete
-      canonList: (sid) => GET(`${API_PREFIX}/scripts/${sid}/canon-entities`),
+      // canon 实体(MD 编辑器资源管理器 / 剧本详情「知识库人物」表格共用):
+      //   list/get 读;create = POST 新建(logical_key 可省,后端按名字+类型生成并在返回体给出;
+      //   显式给的 key 撞了回 409);update = 按 key 的 PUT 补丁(只改 body 里出现的字段);delete。
+      // 以前是 canonUpsert「有 logical_key 就 PUT、否则 POST」—— 表格新建手填 key 会被当成编辑
+      // 打到不存在的 key 上,已拆成显式的 create / update。
+      // list 默认 fetch_all:分页游标按 id、排序按 importance,翻页会漏条;默认一页 50 条时
+      // 新建的实体(importance=0 排最后)在树里看不到。q 可带 { type } 按类型过滤。
+      canonList: (sid, q) => GET(`${API_PREFIX}/scripts/${sid}/canon-entities`, Object.assign({ fetch_all: true }, q || {})),
       canonGet: (sid, key) => GET(`${API_PREFIX}/scripts/${sid}/canon-entities/${encodeURIComponent(key)}`),
-      canonUpsert: (sid, body) => (body && body.logical_key
-        ? PUT(`${API_PREFIX}/scripts/${sid}/canon-entities/${encodeURIComponent(body.logical_key)}`, body)
-        : POST(`${API_PREFIX}/scripts/${sid}/canon-entities`, body)),
+      canonCreate: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/canon-entities`, body),
+      canonUpdate: (sid, key, body) => PUT(`${API_PREFIX}/scripts/${sid}/canon-entities/${encodeURIComponent(key)}`, body),
       canonDelete: (sid, key) => DEL(`${API_PREFIX}/scripts/${sid}/canon-entities/${encodeURIComponent(key)}`, {}),
       // 出生点(玩家选择从哪个章节起场)
       birthpoints: (sid) => GET(`${API_PREFIX}/scripts/${sid}/birthpoints`),

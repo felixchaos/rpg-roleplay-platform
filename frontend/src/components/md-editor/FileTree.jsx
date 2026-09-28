@@ -1,7 +1,7 @@
 // FileTree.jsx — 左栏 VSCode 风资源管理器 + 新建菜单(机械搬出,逐字节不变)。
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { lsGet, lsSet } from '../../lib/storage.js';
+import { lsGetJSON, lsSetJSON } from '../../lib/storage.js';
 import { ContextMenu } from './ContextMenu.jsx';
 import { NODE_GROUPS, nodeKey, KIND_ICON, CAN_DELETE, CAN_RENAME, CAN_DRAG, CAN_CREATE_KIND, stripChapterPrefix, api, toast } from './helpers.js';
 import { createNode, renameNode, deleteNode, fetchGroupList } from './node-crud.js';
@@ -11,7 +11,12 @@ const { useState, useEffect, useCallback, useRef } = React;
 function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate }) {
   const { t } = useTranslation();
   const groupLabel = (kind) => t(`md_editor.tree.group.${kind}`);
-  const [expanded, setExpanded] = useState(() => new Set(lsGet('mde.tree.expanded2', ['chapter']) || ['chapter']));
+  // 展开组持久化走 JSON:lsGet/lsSet 是裸字符串,存进去的数组会变成 "chapter,canon",
+  // 读回来 new Set(字符串) 成了单字符集合 → 每次刷新所有组都折叠。
+  const [expanded, setExpanded] = useState(() => {
+    const saved = lsGetJSON('mde.tree.expanded2', null);
+    return new Set(Array.isArray(saved) ? saved : ['chapter']);
+  });
   const [lists, setLists] = useState({});   // kind → {loading, error, items}
   const [filter, setFilter] = useState('');
   const [sel, setSel] = useState(null);     // 键盘/焦点游标 nodeKey(单个;上下移动 / F2 / active)
@@ -24,7 +29,7 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate }) {
   const bodyRef = useRef(null);
   const submittingRef = useRef(false);      // 提交锁:防 Enter(onKeyDown)+ disabled 翻转引发的 onBlur 二次提交→重复新建
 
-  const persistExpanded = (s) => lsSet('mde.tree.expanded2', [...s]);
+  const persistExpanded = (s) => lsSetJSON('mde.tree.expanded2', [...s]);
   const loadGroup = useCallback(async (kind) => {
     if (!scriptId) return;
     setLists((s) => ({ ...s, [kind]: { ...(s[kind] || {}), loading: true } }));
@@ -65,7 +70,9 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate }) {
   for (const g of NODE_GROUPS) if (isOpen(g.kind)) for (const it of groupItems(g.kind)) flat.push({ kind: g.kind, id: it.id, label: it.label, meta: it });
 
   const startNew = (kind) => { if (!isOpen(kind)) toggle(kind); setEditing({ kind, id: '__new__', value: '' }); setCtx(null); };
-  const startRename = (kind, it) => { setEditing({ kind, id: it.id, value: (kind === 'chapter') ? stripChapterPrefix(it.meta?.title ?? it.label) : it.label }); setCtx(null); };
+  // 预填裸名字(meta.name):label 带「(类型)」「(章节区间)」等显示后缀,拿它改名会把后缀写进名字。
+  const rawName = (kind, it) => ((kind === 'chapter') ? stripChapterPrefix(it.meta?.title ?? it.label) : (it.meta?.name || it.name || it.label || ''));
+  const startRename = (kind, it) => { setEditing({ kind, id: it.id, value: rawName(kind, it) }); setCtx(null); };
 
   const commitEdit = async () => {
     if (submittingRef.current) return;        // 已在提交中(Enter 已触发,onBlur 别再发一次)
@@ -172,7 +179,9 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate }) {
     if (!CAN_RENAME[kind] || kind === 'chapter') { toast(t('md_editor.toast.copy_unsupported'), { kind: 'warning' }); return; }
     setBusy(true);
     try {
-      const created = await createNode(kind, scriptId, `${it.label} ${t('md_editor.copy_suffix')}`);
+      // 复制:用裸名字命名;canon 沿用原类型(之前一律建成「概念」)。
+      const meta = it.meta || it;
+      const created = await createNode(kind, scriptId, `${rawName(kind, it)} ${t('md_editor.copy_suffix')}`, kind === 'canon' ? { type: meta.type } : undefined);
       await loadGroup(kind); onMutate?.('create', kind, created.id, created.label);
       toast(t('md_editor.toast.copied'), { kind: 'ok', duration: 1100 });
     } catch (err) { toast(t('md_editor.toast.copy_failed'), { kind: 'danger', detail: err?.message }); }

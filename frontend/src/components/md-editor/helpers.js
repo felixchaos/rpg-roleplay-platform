@@ -19,7 +19,8 @@ const toast = (msg, opts) => { try { window.__apiToast?.(msg, opts); } catch (_)
 // 章节标题存「裸标题」(不含「第N章」),显示时由前端加序号前缀。剥掉任何已混入的前缀,防重命名/重建出现「第5章 第5章 …」双序号。
 const stripChapterPrefix = (s) => String(s || '').replace(/^\s*第\s*[0-9一二三四五六七八九十百千零〇两]+\s*章\s*/, '');
 // Canon 实体类型本地化 → i18n md_editor.canon_type.* 键。含常见同义词回退。
-const CANON_TYPE_KEYS = { character: 'character', person: 'character', faction: 'faction', organization: 'faction', org: 'faction', location: 'location', place: 'location', item: 'item', concept: 'concept', event: 'event' };
+// organization 是后端合法类型(提取链路会把乐团/工作室等标成它),单独显示「组织」,不再混成「势力」。
+const CANON_TYPE_KEYS = { character: 'character', person: 'character', faction: 'faction', organization: 'organization', org: 'organization', location: 'location', place: 'location', item: 'item', concept: 'concept', event: 'event' };
 const canonTypeZh = (tp) => { const k = CANON_TYPE_KEYS[String(tp || '').toLowerCase()]; return k ? i18n.t(`md_editor.canon_type.${k}`) : (tp || i18n.t('md_editor.canon_type.concept')); };
 
 // 每类实体图标 + 能力。章节删除走后端 delete_chapters(删一批 → 单次重排,与 merge/split 同语义:

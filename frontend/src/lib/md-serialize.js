@@ -48,11 +48,13 @@ export const SCHEMAS = {
   canon: {
     label: 'Canon 实体', idField: 'logical_key',
     bodyField: 'background',
-    writeScalars: ['logical_key', 'name', 'full_name', 'type', 'entity_subtype',
+    // logical_key 是实体的固定标识(其它实体的 parent_logical_key 指向它),只读回显:
+    // 以前可写,改了保存会把 PUT 打到一个不存在的 key 上 → 「不存在」报错。
+    writeScalars: ['name', 'full_name', 'type', 'entity_subtype',
       'parent_logical_key', 'summary', 'identity', 'first_revealed_chapter', 'public_knowledge', 'importance'],
     writeStrArrays: { aliases: 1 },
     writeObjLists: [], writeOpenObjs: ['attrs'],
-    readonly: ['id', 'created_at'],
+    readonly: ['id', 'logical_key', 'created_at'],
     order: ['id', 'logical_key', 'type', 'entity_subtype', 'parent_logical_key', 'name', 'full_name',
       'identity', 'summary', 'aliases', 'first_revealed_chapter', 'public_knowledge', 'importance', 'attrs'],
   },

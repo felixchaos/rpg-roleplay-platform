@@ -2255,7 +2255,7 @@
         "add_title": "新建知识库条目",
         "add_confirm": "创建",
         "add_ok": "知识库条目已创建",
-        "add_required": "logical_key 和 name 为必填项",
+        "add_required": "请填写名称",
         "deleted": "知识库条目已删除",
         "confirm_delete": "确认删除?",
         "view_detail": "查看详情",
@@ -2270,6 +2270,7 @@
         "type_all": "全部",
         "type_character": "人物",
         "type_faction": "势力",
+        "type_organization": "组织",
         "type_location": "地点",
         "type_item": "物品",
         "type_concept": "概念",
@@ -2280,6 +2281,7 @@
         "col_importance": "重要度",
         "col_summary": "摘要",
         "field_logical_key": "逻辑键 (logical_key)",
+        "field_logical_key_ph": "留空自动生成",
         "field_name": "名称",
         "field_name_ph": "人物/势力名",
         "field_type": "类型",
@@ -3990,7 +3992,8 @@
       "event": "事件",
       "faction": "势力",
       "item": "物品",
-      "location": "地点"
+      "location": "地点",
+      "organization": "组织"
     },
     "chapter_prefix": "第{{index}}章",
     "confirm": {

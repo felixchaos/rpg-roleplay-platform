@@ -658,9 +658,10 @@ final class API {
     func scriptWorldbook(base: String, scriptId: Int) async throws -> [WorldbookEntryItem] {
         try await send(try request(base, "/api/scripts/\(scriptId)/worldbook?fetch_all=true"), as: WorldbookResponse.self).list
     }
-    /// 正史实体(只读浏览)。
+    /// 正史实体(只读浏览)。fetch_all=true 全量(与世界书同);limit=500 保留给不认 fetch_all 的旧服务端
+    /// (旧服务端会夹到 200 条,且按 importance 排序、按 id 翻页,第二页起会漏条)。
     func scriptCanon(base: String, scriptId: Int) async throws -> [CanonEntityItem] {
-        try await send(try request(base, "/api/scripts/\(scriptId)/canon-entities?limit=500"), as: CanonResponse.self).list
+        try await send(try request(base, "/api/scripts/\(scriptId)/canon-entities?fetch_all=true&limit=500"), as: CanonResponse.self).list
     }
     struct WorldbookResponse: Decodable { let items: [WorldbookEntryItem]?; let entries: [WorldbookEntryItem]?; var list: [WorldbookEntryItem] { items ?? entries ?? [] } }
     struct CanonResponse: Decodable { let items: [CanonEntityItem]?; var list: [CanonEntityItem] { items ?? [] } }

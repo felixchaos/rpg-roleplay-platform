@@ -30,7 +30,8 @@ import { snippet } from './helpers.js';
 /* ------------------------------------------------------------------ */
 /* Constants                                                             */
 /* ------------------------------------------------------------------ */
-const ENTITY_TYPES = ['character', 'faction', 'location', 'item', 'concept'];
+// 与后端白名单一致(kb.canon_repo.CANON_ENTITY_TYPES;organization 是提取链路会产出的类型)。
+const ENTITY_TYPES = ['character', 'faction', 'organization', 'location', 'item', 'concept'];
 const IMPORTANCE_OPTIONS = [1, 2, 3, 4, 5].map((n) => ({ value: String(n), label: String(n) }));
 
 /* ------------------------------------------------------------------ */
@@ -69,14 +70,14 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
   const [savingDetail, setSavingDetail] = React.useState(false);
 
   /* ---- fetch ---- */
+  // 走 window.api(统一错误归一 + 会话);canonList 默认全量拉取,type 交给后端过滤
+  // (之前裸 fetch ?limit=500 被后端夹到 200、type 参数被忽略,类型切换形同虚设)。
   React.useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    const params = new URLSearchParams({ limit: 500 });
-    if (typeFilter && typeFilter !== 'all') params.set('type', typeFilter);
-    const url = `${window.__API_BASE || ''}/api/scripts/${scriptId}/canon-entities?${params}`;
-    fetch(url, { credentials: 'include' })
-      .then((r) => r.json())
+    const q = (typeFilter && typeFilter !== 'all') ? { type: typeFilter } : {};
+    Promise.resolve()
+      .then(() => window.api.scripts.canonList(scriptId, q))
       .then((j) => { if (!cancelled) setItems(Array.isArray(j) ? j : (j?.items || [])); })
       .catch(() => { if (!cancelled) setItems([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -121,33 +122,26 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
   }, [items, selected]);
 
   /* ---- API calls ---- */
+  // 统一走 api-client:非 2xx 抛 ApiError,message 就是后端 error 原文(直接进 toast detail)。
+  // 之前裸 fetch + r.json(),后端 500 回纯文本时 detail 变成 JSON 解析异常,看不出原因。
   async function apiPut(logicalKey, body) {
-    const r = await fetch(
-      `${window.__API_BASE || ''}/api/scripts/${scriptId}/canon-entities/${encodeURIComponent(logicalKey)}`,
-      { method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
-    );
-    const j = await r.json();
-    if (!r.ok || j.ok === false) throw new Error(j.error || j.detail || t('scripts.toast.save_fail'));
+    const j = await window.api.scripts.canonUpdate(scriptId, logicalKey, body);
+    if (j && j.ok === false) throw new Error(j.error || t('scripts.toast.save_fail'));
     return j;
   }
 
   async function apiPost(body) {
-    const r = await fetch(
-      `${window.__API_BASE || ''}/api/scripts/${scriptId}/canon-entities`,
-      { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
-    );
-    const j = await r.json();
-    if (!r.ok || j.ok === false) throw new Error(j.error || j.detail || t('scripts.toast.save_fail'));
+    // logical_key 留空 → 不发,后端按名字+类型自动生成;填了就按填的建(撞键后端回 409 + 原因)
+    const { logical_key: lk, ...rest } = body;
+    const key = String(lk || '').trim();
+    const j = await window.api.scripts.canonCreate(scriptId, key ? { ...rest, logical_key: key } : rest);
+    if (j && j.ok === false) throw new Error(j.error || t('scripts.toast.save_fail'));
     return j;
   }
 
   async function apiDelete(logicalKey) {
-    const r = await fetch(
-      `${window.__API_BASE || ''}/api/scripts/${scriptId}/canon-entities/${encodeURIComponent(logicalKey)}`,
-      { method: 'DELETE', credentials: 'include' }
-    );
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok && j.ok !== true) throw new Error(j.error || j.detail || t('scripts.toast.delete_fail'));
+    const j = await window.api.scripts.canonDelete(scriptId, logicalKey);
+    if (j && j.ok === false) throw new Error(j.error || t('scripts.toast.delete_fail'));
     return j;
   }
 
@@ -169,8 +163,8 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
   /* ---- add new entity ---- */
   async function submitAdd() {
     if (readonly) return;
-    const body = { ...newForm, importance: parseInt(newForm.importance, 10) || 3 };
-    if (!body.logical_key || !body.name) {
+    const body = { ...newForm, name: (newForm.name || '').trim(), importance: parseInt(newForm.importance, 10) || 3 };
+    if (!body.name) {
       window.__apiToast?.(t('scripts.edit.canon.add_required'), { kind: 'warn' });
       return;
     }
@@ -467,7 +461,7 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
         <CSSpaceBetween direction="horizontal" size="s">
           <CSFormField label={t('scripts.edit.canon.field_logical_key')}>
             <CSInput
-              placeholder="hero_01"
+              placeholder={t('scripts.edit.canon.field_logical_key_ph')}
               value={newForm.logical_key}
               onChange={({ detail }) => setNewForm((f) => ({ ...f, logical_key: detail.value }))}
             />

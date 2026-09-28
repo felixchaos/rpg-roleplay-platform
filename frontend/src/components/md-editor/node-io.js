@@ -24,7 +24,8 @@ async function loadRow(kind, sid, id) {
     return r?.card ?? r ?? {};
   }
   if (kind === 'worldbook') {
-    const r = await A.scripts.worldbook(sid);
+    // fetch_all:默认只回第一页 50 条,之后的条目在这里找不到 → 打开是空白。
+    const r = await A.scripts.worldbook(sid, { fetch_all: true });
     const arr = r?.entries || r?.items || (Array.isArray(r) ? r : []);
     return arr.find((x) => String(x.id) === String(id)) || {};
   }
@@ -105,8 +106,9 @@ async function saveNodeContent(kind, sid, id, content, original, baseUpdatedAt) 
     return;
   }
   if (kind === 'canon') {
-    if (!A.scripts.canonUpsert) throw new Error(i18n.t('md_editor.errors.canon_write_not_ready'));
-    await A.scripts.canonUpsert(sid, { logical_key: id, ...diff });
+    if (!A.scripts.canonUpdate) throw new Error(i18n.t('md_editor.errors.canon_write_not_ready'));
+    // logical_key 是固定标识(front-matter 里只读回显),PUT 目标恒为当前节点 id。
+    await A.scripts.canonUpdate(sid, id, diff);
     return;
   }
   throw new Error(i18n.t('md_editor.errors.unknown_kind', { kind }));
