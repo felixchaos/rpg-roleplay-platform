@@ -36,10 +36,14 @@ async def api_script_character_card(script_id: int, card_id: int, user=Depends(r
 
 @router.post("/api/scripts/{script_id}/character-cards")
 async def api_script_upsert_character_card(request: Request, script_id: int, user=Depends(require_user)):
-    """创建/更新剧本角色卡（payload 传 id 则 update，否则 insert）。"""
+    """创建/更新剧本角色卡（payload 传 id 则 update，否则 insert）。
+
+    不带 id = 新建:同名已存在时报错(create_only),不再按名字把那张卡整张覆盖。
+    """
     body = await request.json()
     try:
-        return json_response({"ok": True, "card": knowledge.upsert_character_card(user["id"], script_id, body)})
+        return json_response({"ok": True, "card": knowledge.upsert_character_card(
+            user["id"], script_id, body, create_only=not (body or {}).get("id"))})
     except ValueError as exc:
         return value_error_response(exc)
     except Exception as exc:

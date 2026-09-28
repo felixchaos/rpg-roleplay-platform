@@ -54,11 +54,16 @@ def get_character_card(user_id: int, script_id: int, card_id: int) -> dict[str, 
     return card_to_dto(row) if row else None
 
 
-def upsert_character_card(user_id: int, script_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+def upsert_character_card(user_id: int, script_id: int, payload: dict[str, Any],
+                          *, create_only: bool = False) -> dict[str, Any]:
     """创建/更新剧本 NPC 角色卡。card_id 给定就 update，否则 insert。
 
     v28: 加 full_name / background / first_revealed_chapter / importance / aliases 等字段。
     强制 card_type='npc',source='platform'(人工 API 路径,区分于 extract 链路 source='extracted')。
+
+    不带 id 时 insert 撞同名会按名合并(on conflict do update)—— 这是导入流水线 / 酒馆卡导入
+    要的语义。create_only=True(REST「新增 NPC」)时同名直接报错:否则用户新建一张和已有 NPC
+    同名的卡,会把那张卡的人设整张清空覆盖。
     """
     init_db()
     name = (payload.get("name") or "").strip()
@@ -96,6 +101,14 @@ def upsert_character_card(user_id: int, script_id: int, payload: dict[str, Any])
         # 空白/未同步剧本也能直接建 NPC 卡,不再强制先 knowledge/sync。
         book = db.execute("select id from books where script_id = %s", (script_id,)).fetchone()
         book_id = int(book["id"]) if book else None
+        if create_only and not card_id:
+            clash = db.execute(
+                "select id from character_cards where script_id = %s and name = %s and card_type='npc'",
+                (script_id, name),
+            ).fetchone()
+            if clash:
+                raise ValueError(f"该剧本已存在同名 NPC 角色卡「{name}」,请换个名字,"
+                                 "或直接打开那张卡编辑")
         if card_id:
             owned = db.execute(
                 "select 1 from character_cards where id = %s and script_id = %s and card_type='npc'",

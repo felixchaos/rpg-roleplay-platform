@@ -5,12 +5,17 @@
 from __future__ import annotations
 
 from fastapi import Depends, Request
+from psycopg.errors import UniqueViolation
 
 from ...db import connect
 from .._deps import json_response, require_user, value_error_response
 from ._shared import _require_owner, _write_commit, router
 
 # ─── anchors CRUD ─────────────────────────────────────────────────────────────
+
+def _duplicate_label_error(label) -> str:
+    return f"同一阶段里已经有叫「{label}」的时间点了,换个名字再试"
+
 
 def _anchor_update_sets(body: dict) -> tuple[list[str], list]:
     """从 PUT body 构造 anchor 更新的 (sets, args)。
@@ -89,10 +94,17 @@ async def api_anchor_update(
 
         sets.append("updated_at=now()")
         args.extend([anchor_id, script_id])
-        db.execute(
-            f"UPDATE script_timeline_anchors SET {', '.join(sets)} WHERE id=%s AND script_id=%s",
-            tuple(args),
-        )
+        try:
+            db.execute(
+                f"UPDATE script_timeline_anchors SET {', '.join(sets)} WHERE id=%s AND script_id=%s",
+                tuple(args),
+            )
+        except UniqueViolation:
+            # 改名 / 改阶段撞了 (script_id, story_phase, story_time_label) 唯一约束:之前裸冒 500。
+            db.rollback()
+            label = body.get("story_time_label", before.get("story_time_label"))
+            return json_response(
+                {"ok": False, "error": _duplicate_label_error(label)}, status_code=409)
 
         after_row = db.execute(
             f"SELECT {_ANCHOR_COLS} FROM script_timeline_anchors WHERE id=%s",
@@ -139,12 +151,14 @@ async def api_anchor_add(
         except ValueError as exc:
             return value_error_response(exc, status_code=403)
 
+        # source='editor':与编辑器 agent 的 create_anchor 同口径 —— 时间线重建只删原著骨架
+        # (source<>'editor'),用户在资源管理器 / 剧本详情里手建的时间点不会被静默抹掉。
         new_row = db.execute(
             """
             INSERT INTO script_timeline_anchors
               (script_id, story_phase, story_time_label,
-               chapter_min, chapter_max, chapter_count, sample_summary)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+               chapter_min, chapter_max, chapter_count, sample_summary, source)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'editor')
             ON CONFLICT (script_id, story_phase, story_time_label) DO NOTHING
             RETURNING id, story_phase, story_time_label, chapter_min, chapter_max, sample_summary
             """,
@@ -157,7 +171,7 @@ async def api_anchor_add(
         ).fetchone()
         if not new_row:
             return json_response(
-                {"ok": False, "error": "story_phase+story_time_label 组合已存在"},
+                {"ok": False, "error": _duplicate_label_error(story_time_label)},
                 status_code=409,
             )
         after = dict(new_row)
