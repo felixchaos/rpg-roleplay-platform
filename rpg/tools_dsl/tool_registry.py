@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import binascii
 import copy
+import hashlib
 import json
 import re
 import shutil
@@ -307,13 +308,44 @@ def _mcp_display_name(server: dict[str, Any]) -> str:
     return str(server.get("display_name") or server.get("name") or "").strip()
 
 
+# 从名字派生的 id 的 ASCII 部分最长多少。原生工具名 = `<server_id>__<工具名>` 截到 64,
+# MCP 工具名常见 20 来个字符(list_allowed_directories 24),id 超长会把分隔符和工具名截掉。
+_MCP_DERIVED_ID_MAX = 32
+
+
+def _mcp_id_from_name(name: str) -> str:
+    """把显示名变成能在原生工具调用里来回编解码的 id:只含 [a-z0-9-]、不长。
+
+    三个 backend 把工具名编成「server_id 里 [A-Za-z0-9_-] 以外换成下划线」+ "__" + 工具名,
+    模型调回来时按第一个 "__" 拆出 server_id(见 agents/gm/backends/_tiered.tool_full_name)。
+    id 里有中文(变成一串下划线)、有 "__"、以下划线结尾、或长到被截断,都拆不回原 id,
+    工具调用一律「server_id 不存在」。所以这里不留下划线(也就不会有 "__"),非 ASCII 字符丢掉;
+    丢过字符或截过长度时补一段名字的短哈希,让不同名字仍得到不同 id(纯中文名 → mcp-<哈希>)。
+    """
+    raw = name.strip()
+    ascii_slug = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")
+    lossy = any(ord(ch) > 127 for ch in raw) or len(ascii_slug) > _MCP_DERIVED_ID_MAX
+    if not lossy:
+        return ascii_slug
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
+    head = ascii_slug[: _MCP_DERIVED_ID_MAX - len(digest) - 1].strip("-") or "mcp"
+    return f"{head}-{digest}"
+
+
 def mcp_server_id(server: dict[str, Any]) -> str:
     """该配置落库后的 server id(与 _normalize_mcp_server 同一口径)。
 
     以前只看 id / display_name,表单发的 name 被丢掉 → 所有新服务器 id 都是 "mcp_server",
     加第二个就覆盖第一个。upsert 路由用它把 id 回给前端,前端拿 id 去校验。
+
+    显式给了 id(编辑时带回的、库里存量的)照旧只做 slugify,不重新派生 —— 否则存量服务器
+    一编辑就换 id。没给 id 时从名字派生,规则见 _mcp_id_from_name。
     """
-    return _slugify(str(server.get("id") or _mcp_display_name(server) or "mcp_server"))
+    explicit = str(server.get("id") or "").strip()
+    if explicit:
+        return _slugify(explicit)
+    name = _mcp_display_name(server)
+    return (_mcp_id_from_name(name) if name else "") or "mcp_server"
 
 
 def _normalize_mcp_server(server: dict[str, Any], *, validate: bool = True) -> dict[str, Any]:

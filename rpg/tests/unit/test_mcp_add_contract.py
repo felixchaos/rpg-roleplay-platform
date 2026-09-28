@@ -9,13 +9,20 @@ web / 手机端的新增表单发 {name, transport, command, env}:
     当命令名去比白名单 → 带参数的 stdio 服务器一律 400。
 修:name 作为 display_name 的别名并参与生成 id;命令框整行在没单独给 args 时拆成命令 + 参数
 (拆完照样过白名单与参数校验);upsert 返回 server_id,前端拿它去校验。
+
+id 还得能被原生工具调用「编回来」:三个 backend 把工具名编成
+`<server_id 里非 [A-Za-z0-9_-] 换下划线>__<工具名>` 并截到 64,模型调回来时按第一个 "__"
+拆出 server_id。所以从名字派生的 id 只能用 [a-z0-9-](不含下划线就不会出现 "__",也不会有
+结尾 "_" 把分隔符拉长),并且要短;中文名没有可用 ASCII 时用 "mcp-" + 名字的短哈希。
 """
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 
+from agents.gm.backends._tiered import SEP, tool_full_name
 from tools_dsl.tool_registry import _normalize_mcp_server, mcp_server_id
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -24,15 +31,49 @@ ROOT = pathlib.Path(__file__).resolve().parents[3]
 def test_name_becomes_display_and_id():
     a = _normalize_mcp_server({"name": "文件系统", "command": "npx", "args": ["@modelcontextprotocol/server-filesystem"]})
     b = _normalize_mcp_server({"name": "My FS", "transport": "http", "url": "https://mcp.example.test"})
-    assert a["id"] == "文件系统" and a["display_name"] == "文件系统"
+    assert a["display_name"] == "文件系统", "显示名要保留原名"
+    assert re.fullmatch(r"mcp-[0-9a-f]{8}", a["id"]), a["id"]
     assert b["id"] == "my-fs" and b["display_name"] == "My FS"
     assert a["id"] != b["id"], "两个不同名字的服务器撞成同一个 id,后加的会覆盖先加的"
+
+
+# 各种会把「按第一个 __ 拆回 server_id」弄坏的名字:纯中文、中英混排、结尾下划线、
+# 名字里本身带 "__"、超长(截到 64 时把分隔符截掉)。
+_NAMES = ["文件系统", "我的 filesystem", "你的 filesystem", "My FS", "my_server_", "a__b",
+          "_lead", "x" * 70, "工具" * 40, "fs.v2 (beta)"]
+
+
+@pytest.mark.parametrize("name", _NAMES)
+def test_derived_id_round_trips_through_native_tool_name(name):
+    sid = mcp_server_id({"name": name})
+    assert re.fullmatch(r"[a-z0-9-]+", sid), sid
+    assert _normalize_mcp_server({"name": name, "transport": "http",
+                                  "url": "https://mcp.example.test"})["id"] == sid
+    # 用 MCP 里常见的较长工具名压一下 64 字符截断
+    for tool in ("read_file", "list_allowed_directories"):
+        full = tool_full_name({"server_id": sid, "name": tool})
+        back_sid, _, back_tool = full.partition(SEP)
+        assert back_sid == sid, f"{name!r}: id {sid!r} 编码成 {full!r} 后拆回 {back_sid!r}"
+        assert back_tool == tool, f"{name!r}: 工具名被截断成 {back_tool!r}"
+
+
+def test_distinct_names_get_distinct_ids():
+    ids = [mcp_server_id({"name": n}) for n in _NAMES]
+    assert len(set(ids)) == len(ids), ids
+
+
+def test_derived_id_is_stable():
+    assert mcp_server_id({"name": "文件系统"}) == mcp_server_id({"name": " 文件系统 "})
+    assert mcp_server_id({"display_name": "文件系统"}) == mcp_server_id({"name": "文件系统"})
 
 
 def test_explicit_id_still_wins():
     s = _normalize_mcp_server({"id": "fs", "name": "文件系统", "command": "npx",
                                "args": ["@modelcontextprotocol/server-filesystem"]})
     assert s["id"] == "fs" and s["display_name"] == "文件系统"
+    # 编辑时带回的存量 id(包括历史上兜底出来的 mcp_server)原样保留,不重新派生
+    for legacy in ("mcp_server", "my_server"):
+        assert mcp_server_id({"id": legacy, "name": "别的名字"}) == legacy
 
 
 def test_mcp_server_id_matches_normalize():
