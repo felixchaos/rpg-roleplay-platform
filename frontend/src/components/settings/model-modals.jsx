@@ -386,15 +386,17 @@ function VisibilityModal({ open, api, onClose, onConfirm }) {
   );
 }
 
-function ValidateModal({ open, api, isAdminUser = false, onSyncRemote, onClose, onConfirm }) {
+function ValidateModal({ open, api, isAdminUser = false, demo = false, onSyncRemote, onClose, onConfirm }) {
   const { t } = useTranslation();
   // task 50：之前 setTimeout 1400ms 后假装 "done"，newSniffed 是写死的
   // gpt-4.5-turbo / gpt-4o-realtime-preview（只在 api.id === "openai" 时显示）。
   // 整个嗅探过程 zero API call。现在改为：
   //   1. 真打 GET /api/models/diff?api_id=... 得到 added / removed / kept
-  //   2. 「全部添加」:管理员走 POST /api/models/model 把每个 added 写进全局目录;普通用户的 diff
-  //      基准是他自己的清单,按钮变成「重新同步到我的清单」(onSyncRemote)
-  //   3. 「删除 N 个」走原 onConfirm（沿用旧 path：调用方 ApiCardList 处理）
+  //   2. 「全部添加」:diff 基准是全局目录(base=catalog,管理员维护内置目录)时走 POST /api/models/model
+  //      把每个 added 写进全局目录;基准是用户自己的清单(base=user:普通用户,或全局目录里没有的
+  //      自建中转站)时,按钮变成「重新同步到我的清单」(onSyncRemote)
+  //   3. 「删除 N 个」走 onConfirm(ids, { base, localOnly }):调用方按基准决定删目录条目还是自己的模型
+  // 演示数据(demo)不是谁的真实配置:不打后端,按本地清单显示「一致」。
   const [phase, setPhase] = useStatePL("idle");
   const [diff, setDiff] = useStatePL(null);
   const [err, setErr] = useStatePL("");
@@ -403,6 +405,12 @@ function ValidateModal({ open, api, isAdminUser = false, onSyncRemote, onClose, 
   React.useEffect(() => {
     if (!open || !api) return;
     setPhase("sniffing"); setErr(""); setDiff(null); setRemoveIds(new Set());
+    if (demo) {
+      setDiff({ ok: true, base: 'user', local_only: [], remote_only: [],
+                matching: (api.models || []).map((m) => m.real_name || m.id) });
+      setPhase("done");
+      return;
+    }
     (async () => {
       try {
         const r = await window.api.models.diff({ api_id: api.id });
@@ -413,7 +421,7 @@ function ValidateModal({ open, api, isAdminUser = false, onSyncRemote, onClose, 
         setPhase("done");
       }
     })();
-  }, [open, api?.id]);
+  }, [open, api?.id, demo]);
   if (!open || !api) return null;
   // 后端 diff 返回 {local_only, remote_only, matching} 都是字符串数组（real_name）。
   // 统一映射为 {real_name, display} 对象数组，给 UI / addAll 用。
@@ -423,6 +431,9 @@ function ValidateModal({ open, api, isAdminUser = false, onSyncRemote, onClose, 
   const kept = wrap(diff && (diff.kept || diff.matching || diff.common));
   const unreachable = api.models.filter(m => m.health === "err");
   const toRemoveList = [...localOnly, ...unreachable.filter(u => !localOnly.some(r => r.real_name === u.real_name))];
+  // 对比基准以后端 diff.base 为准(管理员对全局目录里没有的中转站,实际比的也是自己的清单);
+  // 老后端没有 base 字段时按身份推断。
+  const catalogBase = diff && diff.base ? diff.base === 'catalog' : isAdminUser;
   const toggleRemove = (id) => setRemoveIds(s => {
     const n = new Set(s);
     if (n.has(id)) n.delete(id); else n.add(id);
@@ -431,9 +442,10 @@ function ValidateModal({ open, api, isAdminUser = false, onSyncRemote, onClose, 
   const addAll = async () => {
     if (adding || remoteOnly.length === 0) return;
     setAdding(true);
-    // 普通用户:diff 拿的是他自己的清单(后端 user_view),「把远端模型加进来」= 重新同步自己的
-    // overlay。以前一律逐个打管理员专用的 /api/models/model,普通用户 N 次 403「成功 0 失败 N」。
-    if (!isAdminUser) {
+    // 基准是用户自己的清单(普通用户 / 中转站):「把远端模型加进来」= 重新同步自己的 overlay。
+    // 以前一律逐个打管理员专用的 /api/models/model,普通用户 N 次 403「成功 0 失败 N」;管理员对
+    // 中转站点一次,就把中转站的模型写进了全局目录。
+    if (!catalogBase) {
       try { await onSyncRemote?.(); } finally { setAdding(false); }
       onClose();
       return;
@@ -464,12 +476,15 @@ function ValidateModal({ open, api, isAdminUser = false, onSyncRemote, onClose, 
       onClose={onClose}
       footer={<>
         <span className="muted-2" style={{fontSize: 11.5}}>
-          <Icon name="info" size={11} /> {isAdminUser ? t('settings.validate.base_catalog') : t('settings.validate.base_user')}
+          <Icon name="info" size={11} /> {catalogBase ? t('settings.validate.base_catalog') : t('settings.validate.base_user')}
         </span>
         <div style={{display: "flex", gap: 8}}>
           <button className="btn ghost" onClick={onClose}>{phase === "done" ? t('common.close') : t('common.cancel')}</button>
           {phase === "done" && removeIds.size > 0 && (
-            <button className="btn danger" onClick={() => onConfirm([...removeIds])}>
+            <button className="btn danger" onClick={() => onConfirm([...removeIds], {
+              base: catalogBase ? 'catalog' : 'user',
+              localOnly: localOnly.map((m) => m.real_name || m.id),
+            })}>
               <Icon name="trash" size={12} /> {t('settings.validate.delete_btn', { count: removeIds.size })}
             </button>
           )}
@@ -514,7 +529,7 @@ function ValidateModal({ open, api, isAdminUser = false, onSyncRemote, onClose, 
                   <span className="dot accent" /> {t('settings.validate.new_models', { count: remoteOnly.length })}
                   <button className="btn ghost" style={{height: 22, padding: "0 8px", fontSize: 11, marginLeft: "auto"}}
                     disabled={adding} onClick={addAll}>
-                    {adding ? <><Icon name="spinner" size={11} className="spin" /> {t('settings.validate.adding')}</> : <><Icon name="plus" size={11} /> {isAdminUser ? t('settings.validate.add_all') : t('settings.validate.resync')}</>}
+                    {adding ? <><Icon name="spinner" size={11} className="spin" /> {t('settings.validate.adding')}</> : <><Icon name="plus" size={11} /> {catalogBase ? t('settings.validate.add_all') : t('settings.validate.resync')}</>}
                   </button>
                 </div>
                 <ul className="pl-validate-list">

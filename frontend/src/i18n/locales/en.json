@@ -108,7 +108,8 @@
       "add_model_fail": "Failed to add model",
       "builtin_admin_only": "This is a built-in platform model; only admins can disable, delete or rename it",
       "model_update_fail": "Model setting was not saved",
-      "provider_toggle_fail": "Provider switch was not saved"
+      "provider_toggle_fail": "Provider switch was not saved",
+      "sync_skip_disabled": "This provider is turned off. Turn its switch back on to sync models."
     },
     "add_model": {
       "title": "Configure a new model",
@@ -4801,6 +4802,7 @@
         "add_provider_hint": "To add a new provider, use Settings → Models on the desktop app",
         "sync_done": "Sync complete: {{count}} model(s)",
         "sync_failed": "Sync failed: {{msg}}",
+        "sync_skip_disabled": "This provider is turned off, so its models are not synced. Turn it back on under Settings > Models on desktop, then sync.",
         "admin_only": "Only admins can change global model toggles",
         "save_failed": "Save failed: {{msg}}",
         "delete_key_confirm": "Delete the API key for \"{{name}}\"? You will need to re-add it from the desktop app.",

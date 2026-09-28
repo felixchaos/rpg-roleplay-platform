@@ -97,3 +97,29 @@ describe('removeTargetsFor', () => {
     expect(removeTargetsFor(undefined, ['a'])).toEqual([{ id: 'a', real_name: 'a', synced: false }]);
   });
 });
+
+// 校验弹窗的删除按 diff 的对比基准路由(弹窗把 { base, localOnly } 传回)。
+// 管理员的 diff 以全局目录为基准:local_only 是「目录有、远端没有」的条目。他自己的清单里恰好
+// 有同名的手填模型(synced:true,常见于 /models 列不全、只能手填的供应商)时,以前按视图归属
+// 删掉的是自己的手填模型,目录条目原样保留,下次校验还在。
+describe('removeTargetsFor:按对比基准路由', () => {
+  const view = [{ id: 'gpt-old', synced: true }, { id: 'gpt-x', synced: true }];
+
+  it('base=catalog:local_only 里的 id 一律按内置目录条目处理(不看视图归属)', () => {
+    expect(removeTargetsFor(view, ['gpt-old'], { base: 'catalog', localOnly: ['gpt-old'] })).toEqual([
+      { id: 'gpt-old', real_name: 'gpt-old', synced: false },
+    ]);
+  });
+
+  it('base=catalog:不在 local_only 里的(不可达的视图模型)仍按视图归属', () => {
+    expect(removeTargetsFor(view, ['gpt-x'], { base: 'catalog', localOnly: ['gpt-old'] })).toEqual([
+      { id: 'gpt-x', synced: true },
+    ]);
+  });
+
+  it('base=user:按视图归属(自己的模型走按用户的删除)', () => {
+    expect(removeTargetsFor(view, ['gpt-old'], { base: 'user', localOnly: ['gpt-old'] })).toEqual([
+      { id: 'gpt-old', synced: true },
+    ]);
+  });
+});

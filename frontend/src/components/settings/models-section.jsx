@@ -141,6 +141,16 @@ function ModelsSection() {
 
   const syncRemoteModels = useCallbackPL(async (api, opts = {}) => {
     if (!api) return null;
+    // 演示数据不是谁的真实配置:不去拉远端(管理员带 ?demo=1 时会拿他自己的凭据真打一遍)。
+    if (useMock) return null;
+    // 停用的供应商不同步:后端拉取入口判断「有没有凭据」时跳过停用的行,必然失败,弹出来的是
+    // 「需要先配置该 provider」—— 用户刚存过 key,这句话是错的。连通性一栏本来就显示「已停用」。
+    if (api.enabled === false) {
+      if (!opts.silent) {
+        window.__apiToast?.(t('settings.models.sync_skip_disabled'), { kind: 'info', duration: 3000 });
+      }
+      return null;
+    }
     const apiId = catalogApiIdForCredential(api.id);
     setApis(arr => arr.map(a => a.id === apiId ? {
       ...a,
@@ -183,7 +193,7 @@ function ModelsSection() {
       }
       return null;
     }
-  }, [mapModel, t]);
+  }, [mapModel, t, useMock]);
 
   useEffectPL(() => {
     if (useMock) return;
@@ -207,7 +217,10 @@ function ModelsSection() {
     } catch (e) {
       setApis(arr => arr.map(a => a.id === id ? { ...a, enabled: wasEnabled } : a));
       window.__apiToast?.(t('settings.models.provider_toggle_fail'), { kind: 'danger', detail: e?.message || '' });
+      return;
     }
+    // 重新打开:停用期间不同步(停用时重填的 key 也没拉过模型),这里静默补一次。
+    if (!wasEnabled && api) syncRemoteModels({ ...api, enabled: true }, { silent: true });
   };
   // 单个模型启停:自己的模型(synced)走按用户的端点,内置目录模型只有管理员能改(见
   // lib/model-overlay-write.js)。以前一律打管理员专用的全局端点,普通用户 403 被吞、开关是摆设。
@@ -253,6 +266,9 @@ function ModelsSection() {
     setApis(arr => arr.map(a => a.id === apiId
       ? { ...a, models: a.models.map(m => ({ ...m, visible: ids.includes(m.id) })) }
       : a));
+    // 演示数据:只改本地。演示模型的 id 与真实目录同名,管理员带 ?demo=1 时发出去就按演示勾选
+    // 改写了全局目录里真实模型的启停(影响所有用户)。
+    if (useMock) return;
     if (api) {
       await Promise.all(api.models.map(m => {
         const body = { api_id: apiId, model: m.id, visible: ids.includes(m.id) };
@@ -277,6 +293,7 @@ function ModelsSection() {
                   enabled: true, visible: true, synced: true, health: "unknown" };
     setApis(arr => arr.map(a => a.id === apiId
       ? { ...a, models: [...(a.models || []).filter(x => x.id !== real), row] } : a));
+    if (useMock) return;  // 演示数据:只加到本地列表,不写登录用户真实的 overlay
     try {
       await window.api.models.meUpsertModel({
         api_id: credentialApiIdForCatalog(apiId), real_name: real,
@@ -289,7 +306,8 @@ function ModelsSection() {
       window.__apiToast?.(t('settings.models.add_model_fail'), { kind: 'danger', detail: e?.message || '' });
     }
   };
-  const removeModels = async (apiId, ids) => {
+  // meta = 校验弹窗传回的 { base, localOnly }(diff 的对比基准),决定删目录条目还是自己的模型。
+  const removeModels = async (apiId, ids, meta) => {
     if (useMock) {  // 演示数据:只在本地移除,不发请求
       setApis(arr => arr.map(a => a.id === apiId
         ? { ...a, models: a.models.filter(m => !ids.includes(m.id)) }
@@ -298,8 +316,9 @@ function ModelsSection() {
     }
     const api = apis.find(a => a.id === apiId);
     // 目标按 id 构造:校验弹窗给的下线模型来自全局目录,自动同步后多半不在当前视图里,
-    // 按视图过滤会把它们静默丢掉(见 lib/model-overlay-write.js removeTargetsFor)。
-    const targets = removeTargetsFor(api?.models, ids);
+    // 按视图过滤会把它们静默丢掉;按全局目录比时,同名的自己的模型也不能被当成删除目标
+    // (见 lib/model-overlay-write.js removeTargetsFor)。
+    const targets = removeTargetsFor(api?.models, ids, meta);
     // 只从列表里拿掉真删成功的;删不掉的(普通用户碰内置模型 / 请求失败)留在原位并提示,
     // 不再乐观删掉、刷新又冒出来。
     const results = await Promise.all(targets.map(m =>
@@ -345,6 +364,11 @@ function ModelsSection() {
       onRenameModel={(mId, display) => renameModel(selectedApi.id, mId, display)}
       onDeleteKey={async () => {
         if (!await window.__confirm({ title: t('settings.models.delete_key_title'), message: t('settings.models.delete_key_confirm', { name: selectedApi.name }), danger: true, confirmText: t('settings.models.delete_key_btn') })) return;
+        if (useMock) {  // 演示数据:只在本地移除(演示行的 id 与真实凭据同名,别删到登录用户自己的 key)
+          setSelectedApiId(null);
+          setApis(arr => arr.map(a => a.id === selectedApi.id ? { ...a, key_set: false, key_hint: '—' } : a));
+          return;
+        }
         try {
           // 删除凭证走真正的 delete 端点(无 Base URL 校验);旧实现用 set({api_key:''})
           // 会触发「自定义供应商必须填写 Base URL」的设置态校验,导致自定义中转站删不掉。
@@ -462,49 +486,36 @@ function ModelsSection() {
           const credentialId = normalizeApiId(payload.id);
           const catalogId = catalogApiIdForCredential(credentialId);
           const cfg = PROVIDERS_CONFIG.find((p) => catalogApiIdForCredential(p.id) === catalogId || normalizeApiId(p.id) === credentialId);
-          const kind = catalogId === "vertex_ai"
-            ? "vertex_ai"
-            : catalogId === "anthropic"
-              ? "anthropic"
-              : "openai_compat";
+          // 演示数据:只改本地那一行,不写凭据、不写全局目录(管理员带 ?demo=1 时会写到真东西上)。
+          if (useMock) {
+            const key = (payload.api_key || '').trim();
+            setApis(arr => {
+              const patch = {
+                name: payload.name || cfg?.name || catalogId,
+                base_url: payload.base_url || '',
+                proxy: payload.proxy || 'direct',
+                proxy_url: payload.proxy === 'http_proxy' ? (payload.proxy_url || '').trim() : '',
+                key_set: true,
+                ...(key ? { key_hint: key.slice(-4) } : {}),
+              };
+              if (arr.some(a => a.id === catalogId)) return arr.map(a => a.id === catalogId ? { ...a, ...patch } : a);
+              return [...arr, { id: catalogId, credential_id: credentialId, status: 'configured', enabled: true,
+                connectivity: { status: 'untested' }, models: [], ...patch }];
+            });
+            setSelectedApiId(catalogId);
+            setEditingApi(null); setAddingApi(false);
+            return;
+          }
           // 中转站: 普通用户也可添加自定义 OpenAI 兼容端点 — 后端 me.py 放行未知
           // provider(必带 base_url) + set_credential 的 _validate_base_url 做 SSRF 防护。
           try {
-            // task: BYOK fix — 普通用户填 API key 不应被 admin 闸住。
-            // /api/models/api(upsertApi)写全局 catalog,只有 admin 能调。
-            // 普通用户场景:provider 是项目内置的,catalog 已有 → 直接走 credentials.set。
-            // 若管理员新加 provider(addingApi=true)或者改 base_url/proxy 这类全局字段,
-            // 才尝试 upsertApi。普通用户不保存未知 api_id,避免后续同步模型报 api_id 不存在。
+            // 只写**当前用户自己的**凭据(credentials.set):接口地址 = 凭据的 base_url_override,
+            // 连接方式 / 代理也是凭据字段。管理员同样如此 —— 以前管理员在这里改 Base URL 或新增
+            // 自建中转站,会顺手 upsertApi 写全局目录:改地址 = 把平台里这个供应商的默认地址换成他的
+            // 中转站,所有没配个人地址的用户连同自己的 key 都被发到那里;新增中转站 = 在全局目录里
+            // 建一行。而同一次保存本来就会把地址写进管理员自己的凭据,写全局那一步对他本人是多余的。
+            // 平台默认地址来自内置目录种子,不在设置页维护。
             const existing = apis.find(a => a.id === catalogId);
-            // proxy(连接方式/代理 URL)现在是 per-user 凭据字段,走 credentials.set,不再塞全局 catalog。
-            const needsCatalogWrite = isAdminUser && (
-              addingApi
-              || !existing
-              || (payload.base_url && payload.base_url !== existing.base_url)
-            );
-            // 只有 catalog 真写成功了,下面 key 写失败才配叫「元数据已保存但 key 写入失败」。
-            // 普通用户 needsCatalogWrite 恒 false(catalog 是 admin 专属),以前无条件弹那句
-            // 警告 → 用户看到「元数据已保存」以为留下了半截脏数据,实际一个字节都没写
-            // (dali 反馈截图里两条 toast 叠着,就是这个假警告 + 真失败)。
-            let catalogWritten = false;
-            if (needsCatalogWrite) {
-              try {
-                await window.api.models.upsertApi({
-                  api_id: catalogId,
-                  display_name: payload.name || cfg?.name || catalogId,
-                  base_url: payload.base_url,
-                  kind,
-                });
-                catalogWritten = true;
-              } catch (e) {
-                if (e?.status === 403) {
-                  // 普通用户改全局 catalog 被拒,提示但不阻断 key 保存
-                  window.__apiToast?.(t('settings.more.edit_api.admin_base_url_warn'), { kind: "warn", duration: 3500 });
-                } else {
-                  throw e;
-                }
-              }
-            }
             const keyProvided = !!(payload.api_key && payload.api_key.trim());
             // 连接方式:选了 HTTP 代理才带代理地址,选直连 = 空串(= 清掉已存代理)。
             const proxyUrl = payload.proxy === 'http_proxy' ? (payload.proxy_url || '').trim() : '';
@@ -517,9 +528,9 @@ function ModelsSection() {
             // 免鉴权(本地/自托管)= 显式选项:即使一个字符的 key 都没填也必须落库,
             // 否则「勾了免 Key + 填了地址」保存后什么都没发生(和不勾一模一样)。
             const noAuth = !!payload.no_auth;
-            // 写凭据只有一处请求、一个 catch:以前「带 key」和「keep_key 只改地址」各有一份
-            // credentials.set + catch,catalogWritten 门控只修了前一份,后一份照旧无条件弹
-            // 「元数据已保存但 key 写入失败」的假警告(两条线都漏)。
+            // 写凭据只有一处请求:「带 key」和「keep_key 只改地址 / 代理」共用,失败交给下面的 catch
+            // 单条报错(带 detail)。设置页不再写全局目录,也就不存在「元数据已保存但 key 写入失败」
+            // 这种半截状态。
             let credBody = null;
             if (keyProvided || noAuth) {
               credBody = {
@@ -542,17 +553,7 @@ function ModelsSection() {
             // 落库(手机端 / iOS / 首配弹窗这些没有开关的地方,重填 key 就该能用),所以在这里关掉
             // 某个供应商、再改一下代理或重填 key,它会被悄悄打开。
             if (credBody && !addingApi && existing) credBody.enabled = existing.enabled !== false;
-            if (credBody) {
-              try {
-                await window.api.credentials.set(credBody);
-              } catch (e) {
-                if (catalogWritten) {
-                  // 真的留下了半截状态才提醒;否则交给下面 catch 的 save_fail 单条报错(带 detail)。
-                  window.__apiToast?.(t('settings.edit_api.key_save_fail'), { kind: "warn", detail: e?.message, duration: 4000 });
-                }
-                throw e;
-              }
-            }
+            if (credBody) await window.api.credentials.set(credBody);
             window.__apiToast?.(addingApi ? t('settings.edit_api.add_ok') : t('settings.edit_api.save_ok'), { kind: "ok" });
             const rows = await loadConfiguredApis();
             const row = rows.find(a => a.id === catalogId) || {
@@ -564,7 +565,9 @@ function ModelsSection() {
               models: [],
             };
             setSelectedApiId(catalogId);
-            await syncRemoteModels(row, { silent: false });
+            // 停用的供应商保存后不同步:后端这时也没拉模型(停用的凭据拉不到,不能因此清掉用户
+            // 的模型清单),前端再同步只会弹一条错误的「需要先配置该 provider」。
+            if (row.enabled !== false) await syncRemoteModels(row, { silent: false });
           } catch (e) {
             // detail 常是后端一整段可执行说明(如「云端连不到本地模型,请用桌面版…」),
             // 默认 2.4s 读不完 → 给失败态更长停留。
@@ -590,9 +593,10 @@ function ModelsSection() {
         open={!!validateApi}
         api={apis.find(a => a.id === validateApi)}
         isAdminUser={isAdminUser}
+        demo={useMock}
         onSyncRemote={() => syncRemoteModels(apis.find(a => a.id === validateApi), { silent: false })}
         onClose={() => setValidateApi(null)}
-        onConfirm={(toRemove) => { removeModels(validateApi, toRemove); setValidateApi(null); }}
+        onConfirm={(toRemove, meta) => { removeModels(validateApi, toRemove, meta); setValidateApi(null); }}
       />
       <AddModelModal
         open={!!addModelApi}

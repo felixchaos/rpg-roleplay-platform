@@ -13,7 +13,7 @@
 import React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, waitFor, act } from '@testing-library/react';
-import '../i18n/index.js';
+import i18n from '../i18n/index.js';
 
 import { renameModel, isAdminOnlyModelEdit } from '../lib/model-overlay-write.js';
 
@@ -147,6 +147,40 @@ describe('ModelsSection 按归属写', () => {
     await waitFor(() => expect(window.__apiToast).toHaveBeenCalled());
     expect(globalThis.__apiTableProps.items.find((a) => a.id === 'deepseek').enabled).toBe(true);
     expect(window.api.models.upsertApi).not.toHaveBeenCalled();
+  });
+
+  it('停用的供应商点联通性 → 不发同步请求,提示先打开开关(不再弹「需要先配置」)', async () => {
+    installApi({ role: 'user' });
+    await mountAndSelect();
+    const row = globalThis.__apiTableProps.items.find((a) => a.id === 'deepseek');
+    await act(async () => { await toggleCell().cell(row).props.children.props.set(false); });
+    await waitFor(() => expect(globalThis.__apiTableProps.items.find((a) => a.id === 'deepseek').enabled).toBe(false));
+    window.api.models.syncRemote.mockClear();
+    window.__apiToast.mockClear();
+    const off = globalThis.__apiTableProps.items.find((a) => a.id === 'deepseek');
+    const conn = globalThis.__apiTableProps.columnDefinitions.find((c) => c.id === 'connectivity').cell(off);
+    await act(async () => { await conn.props.onClick({ stopPropagation() {} }); });
+    expect(window.api.models.syncRemote).not.toHaveBeenCalled();
+    expect(window.__apiToast).toHaveBeenCalledTimes(1);
+    expect(window.__apiToast.mock.calls[0][0]).toBe(i18n.t('settings.models.sync_skip_disabled'));
+    expect(window.__apiToast.mock.calls[0][1]).toMatchObject({ kind: 'info' });
+  });
+
+  it('重新打开供应商开关 → 静默补一次同步(停用期间重填的 key 没拉过模型)', async () => {
+    installApi({ role: 'user' });
+    window.api.credentials.list = vi.fn().mockResolvedValue({ items: [
+      { api_id: 'deepseek', has_credential: true, key_hint: 'abcd', enabled: false },
+    ] });
+    window.api.credentials.setEnabled = vi.fn().mockResolvedValue({ ok: true, enabled: true });
+    const { ModelsSection } = await import('../components/settings/models-section.jsx');
+    globalThis.__apiTableProps = null;
+    render(<ModelsSection />);
+    await waitFor(() => expect(globalThis.__apiTableProps?.items?.find((a) => a.id === 'deepseek')).toBeTruthy());
+    expect(window.api.models.syncRemote).not.toHaveBeenCalled();
+    const row = globalThis.__apiTableProps.items.find((a) => a.id === 'deepseek');
+    await act(async () => { await toggleCell().cell(row).props.children.props.set(true); });
+    await waitFor(() => expect(window.api.models.syncRemote).toHaveBeenCalledTimes(1));
+    expect(window.__apiToast).not.toHaveBeenCalled();
   });
 
   it('校验弹窗拿到身份与「重新同步」回调(普通用户的全部添加 = 同步自己的清单)', async () => {

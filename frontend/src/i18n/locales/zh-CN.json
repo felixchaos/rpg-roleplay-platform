@@ -205,7 +205,8 @@
       "add_model_fail": "模型添加失败",
       "builtin_admin_only": "这是平台内置的模型,只有管理员能停用、删除或改名",
       "model_update_fail": "模型设置没有保存成功",
-      "provider_toggle_fail": "供应商开关没有保存成功"
+      "provider_toggle_fail": "供应商开关没有保存成功",
+      "sync_skip_disabled": "这个供应商已停用,打开右侧开关后再同步模型"
     },
     "add_model": {
       "title": "配置一个新模型",
@@ -4798,6 +4799,7 @@
         "add_provider_hint": "添加新供应商请在电脑端「设置 → 模型」操作",
         "sync_done": "同步完成：{{count}} 个模型",
         "sync_failed": "同步失败: {{msg}}",
+        "sync_skip_disabled": "这个供应商已停用,不同步模型。在电脑端「设置 → 模型」打开它的开关后再同步",
         "admin_only": "仅管理员可修改全局模型开关",
         "save_failed": "保存失败: {{msg}}",
         "delete_key_confirm": "删除「{{name}}」的 API 密钥?删除后需回电脑端重新配置。",

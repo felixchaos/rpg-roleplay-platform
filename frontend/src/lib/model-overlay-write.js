@@ -55,8 +55,19 @@ export async function removeModel(api, { apiId, model, isAdmin }) {
 // 同步,视图随即换成用户自己的清单(远端 + 手填),「目录里有、远端已下线」的模型本来就不在视图里。
 // 先拿视图过滤会把这些 id 直接丢掉:不删、不发请求、也不提示。视图外的 id 一律按平台内置目录
 // 模型处理:管理员走全局删除,普通用户拿到「只有管理员能改」。
-export function removeTargetsFor(viewModels, ids) {
+//
+// opts = 校验弹窗传回的 { base, localOnly }(diff 的对比基准与「本地多余」清单):
+//   base === 'catalog'(管理员维护全局目录):localOnly 里的 id 是目录条目,一律按内置目录处理 ——
+//     即使他自己的清单里恰好有同名的手填模型,也不能删成自己的(以前就是这样:目录条目原样
+//     保留,自己的手填模型被删);
+//   base === 'user' 或没给:按视图里那条的归属(synced)路由。
+// 不在 localOnly 里的 id(弹窗里「不可达」的视图模型)始终按视图归属。
+export function removeTargetsFor(viewModels, ids, opts = {}) {
   const view = Array.isArray(viewModels) ? viewModels : [];
-  return (ids || []).map((id) => view.find((m) => m && m.id === id)
-    || { id, real_name: id, synced: false });
+  const catalogIds = opts && opts.base === 'catalog' ? new Set(opts.localOnly || []) : null;
+  const builtin = (id) => ({ id, real_name: id, synced: false });
+  return (ids || []).map((id) => {
+    if (catalogIds && catalogIds.has(id)) return builtin(id);
+    return view.find((m) => m && m.id === id) || builtin(id);
+  });
 }

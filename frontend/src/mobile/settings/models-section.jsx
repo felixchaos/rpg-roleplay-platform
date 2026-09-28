@@ -180,6 +180,12 @@ function ModelsSection({ nav, onBack }) {
 
   const syncRemote = useCallback(async (api, silent=false) => {
     if (!api) return;
+    // 停用的供应商不同步:后端拉取入口跳过停用的凭据,必然失败,列表上会挂一个「错误」、
+    // 手动刷新还弹「需要先配置该 provider」(用户明明配过 key)。卡片上已经标了「已停用」。
+    if (api.enabled === false) {
+      if (!silent) nav.toast(t('mobile.settings.models.sync_skip_disabled'), 'warn', 'warn');
+      return;
+    }
     const aId = catId(api.id);
     setApis(arr => arr.map(a => a.id===aId ? { ...a, connectivity: { ...a.connectivity, status:'checking' } } : a));
     try {
@@ -195,7 +201,7 @@ function ModelsSection({ nav, onBack }) {
       setApis(arr => arr.map(a => a.id===aId ? { ...a, connectivity: { status:'err', error:e?.message||'' } } : a));
       if (!silent) nav.toast(t('mobile.settings.models.sync_failed', { msg: e?.message||'' }), 'danger', 'warn');
     }
-  }, [mapModel, nav]);
+  }, [mapModel, nav, t]);
 
   const reload = useCallback(async () => {
     try { setLoadErr(''); await load(); }

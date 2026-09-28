@@ -5,7 +5,7 @@ import { useState as useStatePL, useEffect as useEffectPL } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Icon } from '../../game-icons.jsx';
 import { SetGroup } from './shared.jsx';
-import { normalizeApiId, catalogApiIdForCredential, PROVIDERS_CONFIG } from './models-catalog.js';
+import { normalizeApiId, PROVIDERS_CONFIG } from './models-catalog.js';
 import CSContainer from '@cloudscape-design/components/container';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
 import CSAlert from '@cloudscape-design/components/alert';
@@ -24,7 +24,6 @@ import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
  */
 function ProviderConfigSection() {
   const { t } = useTranslation();
-  const isAdminUser = !!(window.RPG_AUTH && window.RPG_AUTH.authed && window.MOCK_PLATFORM?.user?.role === "admin");
   const [creds, setCreds] = useStatePL({});
   const [saving, setSaving] = useStatePL({});
   const [agentPlatformJson, setAgentPlatformJson] = useStatePL(null);
@@ -53,21 +52,26 @@ function ProviderConfigSection() {
   const saveKey = async (providerId, apiKey, baseUrl) => {
     setSaving(s => ({ ...s, [providerId]: true }));
     try {
-      if (apiKey && apiKey.trim()) {
+      const key = (apiKey || '').trim();
+      const defaultBase = PROVIDERS_CONFIG.find((p) => p.id === providerId)?.defaultBase || '';
+      // 地址只写**自己的**凭据覆盖(base_url_override),不写全局目录。以前管理员在这里保存会
+      // upsertApi 改掉平台里这个供应商的默认地址(所有没配个人地址的用户都跟着走),普通用户则每次
+      // 保存都弹一条「仅管理员可修改」—— 后端早就允许每个人配自己的地址了。
+      // 输入框预填「已存覆盖 || 默认地址」:没改就不带这个键(后端保留已存值),改回默认 = 清掉覆盖。
+      const base = typeof baseUrl === 'string' ? baseUrl.trim() : undefined;
+      const override = base !== undefined && base !== (creds[providerId]?.base_url || defaultBase)
+        ? (base === defaultBase ? '' : base)
+        : undefined;
+      const withBase = override !== undefined ? { base_url_override: override } : {};
+      if (key) {
         // 不带 proxy 键:这张卡片没有连接方式输入,后端据此保留已存的代理。
-        await window.api.credentials.set({ api_id: providerId, api_key: apiKey.trim() });
-      }
-      if (baseUrl !== undefined) {
-        if (isAdminUser) {
-          const cfg = PROVIDERS_CONFIG.find((p) => p.id === providerId);
-          const kind = providerId === "AgentPlatform" ? "vertex_ai" : providerId === "anthropic" ? "anthropic" : "openai_compat";
-          await window.api.models.upsertApi({ api_id: catalogApiIdForCredential(providerId), base_url: baseUrl, kind, display_name: cfg?.name || providerId });
-        } else {
-          window.__apiToast?.(t('settings_extra.admin_base_url_only'), { kind: "warn", duration: 3000 });
-        }
+        await window.api.credentials.set({ api_id: providerId, api_key: key, ...withBase });
+      } else if (override !== undefined) {
+        // 只改地址:保留已存密钥(还没配 key 的供应商,后端会回「请先填写 Key」)。
+        await window.api.credentials.set({ api_id: providerId, api_key: '', keep_key: true, ...withBase });
       }
       window.__apiToast?.(t('settings.providers.save_ok'), { kind: "ok", duration: 1800 });
-      setCreds(s => ({ ...s, [providerId]: { ...s[providerId], has_key: !!(apiKey?.trim() || s[providerId]?.has_key), base_url: baseUrl ?? s[providerId]?.base_url } }));
+      setCreds(s => ({ ...s, [providerId]: { ...s[providerId], has_key: !!(key || s[providerId]?.has_key), base_url: override ?? s[providerId]?.base_url } }));
     } catch (e) {
       window.__apiToast?.(t('settings.providers.save_fail'), { kind: "danger", detail: e?.message, duration: 9000 });
       await loadCreds();

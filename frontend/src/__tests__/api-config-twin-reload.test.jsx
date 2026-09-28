@@ -92,3 +92,42 @@ describe('手机端 ApisSection:保存失败后回读', () => {
     expect(toast.mock.calls.some(([, kind]) => kind === 'danger')).toBe(true);
   });
 });
+
+// 设置页「供应商配置」卡片的接口地址只写自己的凭据:以前管理员保存会 upsertApi 改掉平台里这个
+// 供应商的默认地址(所有没配个人地址的用户都跟着走),普通用户每次保存都弹「仅管理员可修改」。
+describe('设置页供应商卡片:接口地址只写自己的凭据', () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  async function mountCard(role) {
+    window.RPG_AUTH = { authed: true, online: true };
+    window.MOCK_PLATFORM = { user: { role } };
+    window.__apiToast = vi.fn();
+    window.api = {
+      credentials: { list: vi.fn().mockResolvedValue({ items: [] }), set: vi.fn().mockResolvedValue({ ok: true }) },
+      models: { upsertApi: vi.fn().mockResolvedValue({}) },
+    };
+    const { ProviderConfigSection } = await import('../components/settings/provider-config.jsx');
+    render(<ProviderConfigSection />);
+    await waitFor(() => expect(window.api.credentials.list).toHaveBeenCalledTimes(1));
+  }
+
+  for (const role of ['admin', 'user']) {
+    it(`${role}:填 key 并改地址 → 地址进自己的凭据,不写全局目录,不弹「仅管理员」`, async () => {
+      await mountCard(role);
+      const keyInput = document.querySelector('input[type="password"]');
+      fireEvent.change(keyInput, { target: { value: 'sk-own' } });
+      // 同一张卡片里的地址输入框(紧跟在 key 后面的文本框)
+      const inputs = Array.from(document.querySelectorAll('input')).filter((el) => el.type !== 'file');
+      const baseInput = inputs[inputs.indexOf(keyInput) + 1];
+      fireEvent.change(baseInput, { target: { value: 'https://relay.example.com/v1' } });
+      const saveBtn = screen.getAllByRole('button', { name: '保存' }).find((b) => !b.disabled);
+      await act(async () => { fireEvent.click(saveBtn); });
+      await waitFor(() => expect(window.api.credentials.set).toHaveBeenCalledTimes(1));
+      expect(window.api.credentials.set.mock.calls[0][0]).toMatchObject({
+        api_key: 'sk-own', base_url_override: 'https://relay.example.com/v1',
+      });
+      expect(window.api.models.upsertApi).not.toHaveBeenCalled();
+      expect(window.__apiToast.mock.calls.map((c) => (c[1] || {}).kind)).toEqual(['ok']);
+    });
+  }
+});

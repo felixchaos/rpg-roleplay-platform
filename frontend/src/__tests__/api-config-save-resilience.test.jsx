@@ -13,7 +13,11 @@
  *      (catalogWritten 门控,F10 第 5 条);
  *    - 失败后回读一次后端真实状态;
  *    - 编辑已有供应商时把列表上那个开关的当前状态一起发回去:后端没收到 enabled 时按「启用」
- *      落库,以前在这里关掉某个供应商、再改一下代理或重填 key,它就被悄悄打开了。
+ *      落库,以前在这里关掉某个供应商、再改一下代理或重填 key,它就被悄悄打开了;
+ *    - 停用的供应商保存后不去同步远端模型:停用的凭据拉不到模型,以前紧跟「保存成功」弹出红色
+ *      「同步远端模型失败 · 需要先配置该 provider」(用户刚存过 key);
+ *    - 只写用户自己的凭据:管理员改接口地址 / 新增自建中转站也不写全局目录(以前改地址会把平台里
+ *      这个供应商的默认地址换成管理员的中转站,所有没配个人地址的用户都被发到那里)。
  * 3. 首配拦截弹窗的内联供应商卡片:不带 proxy 键(后端据此保留已存代理),失败后回读凭据。
  * 4. __refreshPlatform:auth.me 网络失败 ≠ 未登录,保留原登录态。
  */
@@ -21,7 +25,8 @@ import React from 'react';
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { render, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import i18n from '../i18n/index.js';
 
 // ── 设置页的重依赖换成桩:只关心 onConfirm 的请求与提示 ─────────────────────────
 vi.mock('../platform-app.jsx', () => ({
@@ -150,12 +155,14 @@ function installSettingsApi({ role = 'user', credSet, proxyUrl = '', override = 
   };
 }
 
-async function mountSettings() {
+async function mountSettings({ waitAutoSync = true } = {}) {
   const { ModelsSection } = await import('../components/settings/models-section.jsx');
   globalThis.__editApiProps = null;
   render(<ModelsSection />);
-  // 自动同步发出 = 已配凭据的行已经进了 state,拿到的 onConfirm 闭包里有 existing
-  await waitFor(() => expect(window.api.models.syncRemote).toHaveBeenCalled());
+  // 弹窗渲染出来 = 加载完成,已配凭据的行已经进了 state,拿到的 onConfirm 闭包里有 existing。
+  // 启用的供应商再等自动同步发出(停用的供应商不自动同步)。
+  await waitFor(() => expect(globalThis.__editApiProps).toBeTruthy());
+  if (waitAutoSync) await waitFor(() => expect(window.api.models.syncRemote).toHaveBeenCalled());
   return () => globalThis.__editApiProps.onConfirm;
 }
 
@@ -180,22 +187,34 @@ describe('设置页保存凭据', () => {
     });
   });
 
-  it('已关掉的供应商:只改代理 → 发回 enabled:false,不被悄悄打开', async () => {
+  // 真实后端对停用的凭据:拉取入口判断「有没有凭据」时跳过停用的行 → 同步请求被拒。
+  const rejectDisabledSync = () => {
+    window.api.models.syncRemote = vi.fn().mockRejectedValue(Object.assign(
+      new Error('需要先在「个人主页 → API 凭证」中配置该 provider 才能调用探测接口'), { status: 403 }));
+  };
+
+  it('已关掉的供应商:只改代理 → 发回 enabled:false,不被悄悄打开,也不弹同步失败', async () => {
     installSettingsApi({ enabled: false });
-    const onConfirm = await mountSettings();
+    rejectDisabledSync();
+    const onConfirm = await mountSettings({ waitAutoSync: false });
     await act(async () => {
       await onConfirm()({ ...EDIT, base_url: 'https://api.deepseek.com/v1', proxy: 'http_proxy', proxy_url: 'http://127.0.0.1:7890' });
     });
     expect(window.api.credentials.set.mock.calls[0][0]).toMatchObject({ keep_key: true, enabled: false });
+    expect(window.api.models.syncRemote).not.toHaveBeenCalled();
+    expect(toastKinds()).toEqual(['ok']);
   });
 
-  it('已关掉的供应商:重填 key → 同样保持关闭', async () => {
+  it('已关掉的供应商:重填 key → 同样保持关闭,保存后不去同步、不弹「同步远端模型失败」', async () => {
     installSettingsApi({ enabled: false });
-    const onConfirm = await mountSettings();
+    rejectDisabledSync();
+    const onConfirm = await mountSettings({ waitAutoSync: false });
     await act(async () => {
       await onConfirm()({ ...EDIT, base_url: 'https://api.deepseek.com/v1', api_key: 'sk-new' });
     });
     expect(window.api.credentials.set.mock.calls[0][0]).toMatchObject({ api_key: 'sk-new', enabled: false });
+    expect(window.api.models.syncRemote).not.toHaveBeenCalled();
+    expect(toastKinds()).toEqual(['ok']);
   });
 
   it('代理从 HTTP 改回直连 → keep_key 带空串(清掉已存代理)', async () => {
@@ -227,15 +246,43 @@ describe('设置页保存凭据', () => {
     expect(toastKinds()).toEqual(['danger']);
   });
 
-  it('管理员先写了目录、keep_key 再失败 → 这时才提示半截状态', async () => {
+  it('管理员改接口地址 → 只写自己的凭据(keep_key + base_url_override),不改全局目录', async () => {
+    installSettingsApi({ role: 'admin' });
+    const onConfirm = await mountSettings();
+    await act(async () => {
+      await onConfirm()({ ...EDIT, base_url: 'https://relay.example.com/v1' });
+    });
+    expect(window.api.models.upsertApi).not.toHaveBeenCalled();
+    expect(window.api.credentials.set.mock.calls[0][0]).toMatchObject({
+      keep_key: true, base_url_override: 'https://relay.example.com/v1',
+    });
+  });
+
+  it('管理员 keep_key 失败 → 只有一条 save_fail(没写全局目录,不存在半截状态)', async () => {
     const credSet = vi.fn().mockRejectedValue(new Error('boom'));
     installSettingsApi({ role: 'admin', credSet });
     const onConfirm = await mountSettings();
     await act(async () => {
       await onConfirm()({ ...EDIT, base_url: 'https://relay.example.com/v1' });
     });
-    expect(window.api.models.upsertApi).toHaveBeenCalled();
-    expect(toastKinds()).toEqual(['warn', 'danger']);
+    expect(window.api.models.upsertApi).not.toHaveBeenCalled();
+    expect(toastKinds()).toEqual(['danger']);
+  });
+
+  it('管理员新增自建中转站 → 只写自己的凭据,不在全局目录建行', async () => {
+    installSettingsApi({ role: 'admin' });
+    await mountSettings();
+    const addBtn = screen.getAllByRole('button', { name: i18n.t('settings.models.add_key') })[0];
+    await act(async () => { fireEvent.click(addBtn); });
+    await waitFor(() => expect(globalThis.__editApiProps.isNew).toBe(true));
+    await act(async () => {
+      await globalThis.__editApiProps.onConfirm({ id: 'my-relay', name: 'my-relay', base_url: 'https://relay.example.com/v1',
+        api_key: 'sk-relay', proxy: 'direct', proxy_url: '', no_auth: false });
+    });
+    expect(window.api.models.upsertApi).not.toHaveBeenCalled();
+    expect(window.api.credentials.set.mock.calls[0][0]).toMatchObject({
+      api_id: 'my-relay', api_key: 'sk-relay', base_url_override: 'https://relay.example.com/v1',
+    });
   });
 
   it('保存超时 → 报失败后回读一次后端(已落库的凭据要能显示出来)', async () => {
