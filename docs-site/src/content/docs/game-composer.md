@@ -64,7 +64,6 @@ description: "游戏主界面底部的输入区是你与 GM（游戏主持人）
 
 | 命令 | 说明 |
 |---|---|
-| `/memory normal\|deep\|off` | 切换记忆检索模式（normal = 默认；deep = 精细检索；off = 关闭） |
 | `/permission default\|review\|read_only\|full_access` | 切换 GM 写入权限（见下方「权限控制」） |
 
 ### 工程类

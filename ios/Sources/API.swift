@@ -839,10 +839,6 @@ final class API {
         _ = try? await session.data(for: try request(base, "/api/questions/clear", method: "POST",
             json: ["id": id, "index": index, "choice": choice]))
     }
-    /// 记忆模式 normal/deep/off。
-    func memoryMode(base: String, mode: String) async {
-        _ = try? await session.data(for: try request(base, "/api/memory/mode", method: "POST", json: ["mode": mode]))
-    }
     /// 手动保存当前存档。
     func saveGame(base: String) async {
         _ = try? await session.data(for: try request(base, "/api/save", method: "POST", json: [:]))

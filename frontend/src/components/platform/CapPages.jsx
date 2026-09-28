@@ -471,7 +471,7 @@ const API_ROWS = [
   { m: "GET",  p: "/api/v1/library",                   d: "库文件列表",                                 group: "库" },
   { m: "POST", p: "/api/v1/library/upload",            d: "上传文件",                                   group: "库" },
   { m: "POST", p: "/api/v1/library/mkdir",             d: "创建文件夹",                                 group: "库" },
-  { m: "GET",  p: "/api/v1/library/download",          d: "下载文件",                                   group: "库" },
+  { m: "GET",  p: "/api/v1/library/asset/{id}/download", d: "下载文件",                                group: "库" },
   { m: "POST", p: "/api/v1/mcp/server",                d: "新增 / 更新 MCP 服务器配置",                 group: "能力" },
   { m: "POST", p: "/api/v1/skills/import",             d: "本地部署导入 Skill 包",                       group: "能力" },
 ];

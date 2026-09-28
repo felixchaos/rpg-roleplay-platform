@@ -20,7 +20,8 @@ const SLASH_COMMANDS = [
   { id: "var", trigger: "/var ", labelKey: "game.command.var_label", groupKey: "game.command.group_state_write", hint: "/var variable=value" },
   { id: "pin", trigger: "/pin ", labelKey: "game.command.pin_label", groupKey: "game.command.group_memory", hint: "/pin <text>" },
   { id: "note", trigger: "/note ", labelKey: "game.command.note_label", groupKey: "game.command.group_memory", hint: "/note <text>" },
-  { id: "memory", trigger: "/memory ", labelKey: "game.command.memory_label", groupKey: "game.command.group_mode", hint: "/memory normal|deep|off" },
+  // 「/memory normal|deep|off」已删:v1.77.0 起记忆模式什么都不控制(后端没有这条指令,发出去会被当成
+  //  一句台词交给 GM)。召回量 / 预算 / 分桶在「设置 → 记忆」里调。
   { id: "permission", trigger: "/permission ", labelKey: "game.command.permission_label", groupKey: "game.command.group_mode", hint: "/permission default|review|full_access" },
   { id: "save", trigger: "/save", labelKey: "game.command.save_label", groupKey: "game.command.group_engineering", hint: "/save" },
   { id: "retry", trigger: "/retry", labelKey: "game.command.retry_label", groupKey: "game.command.group_engineering", hint: "/retry" },

@@ -322,7 +322,6 @@ struct ChatView: View {
                     ("/var ", "设变量", "/var 变量=值"),
                     ("/pin ", "固定记忆", "/pin <文本>"),
                     ("/note ", "玩家笔记", "/note <文本>"),
-                    ("/memory ", "记忆模式", "/memory normal|deep|off"),
                     ("/permission ", "权限模式", "/permission default|review|full_access"),
                     ("/retry", "重试本轮", "/retry")]
         return ScrollView {

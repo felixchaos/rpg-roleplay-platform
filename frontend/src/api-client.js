@@ -369,8 +369,6 @@
       loginHistory: () => GET(`${API_PREFIX}/auth/login-history`),
       sessionsList: () => GET(`${API_PREFIX}/auth/sessions`),
       sessionsRevoke: (sid) => POST(`${API_PREFIX}/auth/sessions/revoke`, { session_id: sid }),
-      smsCode: (phone) => POST(`${API_PREFIX}/auth/sms-code`, { phone }),
-      smsVerify: (body) => POST(`${API_PREFIX}/auth/sms-verify`, body),
       revokeAllSessions: () => POST(`${API_PREFIX}/auth/sessions/revoke-all`, {}),
     },
 
@@ -963,8 +961,6 @@
         return _send(`${API_PREFIX}/library/upload`, { method: "POST", body: fd });
       },
       _legacyMkdir: (body) => POST(`${API_PREFIX}/library/mkdir`, body),
-      _legacyDelete: (body) => POST(`${API_PREFIX}/library/delete`, body),
-      _legacyDownloadUrl: (path) => BASE + `${API_PREFIX}/library/download?path=` + encodeURIComponent(path),
     },
 
     // ---------- Uploads (chunked) ----------
@@ -1006,8 +1002,6 @@
       // GET /api/models/catalog — 同源别名（Phase 0 由 Agent C 添加），返回完全相同 payload。
       // ModelPicker.jsx 改用 list()；catalog() 保留供兼容老调用方。
       catalog: () => GET(`${API_PREFIX}/models/catalog`),
-      // 强制重拉所有 provider live /models,清 TTL cache
-      refresh: () => POST(`${API_PREFIX}/models/refresh`, {}),
       select: (body) => POST(`${API_PREFIX}/models/select`, body),
       upsertApi: (body) => POST(`${API_PREFIX}/models/api`, body),
       upsertModel: (body) => POST(`${API_PREFIX}/models/model`, body),

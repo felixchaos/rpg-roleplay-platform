@@ -64,7 +64,6 @@ Type `/` in the input box to open the command picker. Use `↑↓` to navigate, 
 
 | Command | Description |
 |---|---|
-| `/memory normal\|deep\|off` | Switch memory retrieval mode (normal = default; deep = fine-grained; off = disabled) |
 | `/permission default\|review\|read_only\|full_access` | Switch GM write permissions (see "Permission Control" below) |
 
 ### Utility

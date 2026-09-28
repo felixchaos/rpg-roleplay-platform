@@ -167,9 +167,6 @@ struct GameSnapshot {
         return (raw["permission"] as? String) ?? "full_access"
     }
 
-    // 记忆模式
-    var memoryModeValue: String { (memory?["mode"] as? String) ?? "normal" }
-
     // 待确认:GM 询问(选项 chips)/ 状态写入(审核模式)
     private var permsDict: [String: Any]? { raw["permissions"] as? [String: Any] }
     private func anyStr(_ v: Any?) -> String {

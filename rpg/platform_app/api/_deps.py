@@ -24,7 +24,6 @@ COMMANDS = [
     ("POST", "/api/chat", "发送玩家行动/对话，支持流式 GM 输出与结构化状态写回"),
     ("POST", "/api/stop", "打断当前生成"),
     ("POST", "/api/save", "手动保存当前游戏"),
-    ("POST", "/api/memory/mode", "设置记忆模式"),
     ("POST", "/api/memory/add", "添加长期记忆"),
     ("POST", "/api/memory/remove", "删除长期记忆"),
     ("POST", "/api/permissions", "设置 LLM 状态写入权限"),
@@ -74,8 +73,6 @@ COMMANDS = [
     ("GET", "/api/library", "文件库列表"),
     ("POST", "/api/library/upload", "文件库上传"),
     ("POST", "/api/library/mkdir", "文件库创建文件夹"),
-    ("POST", "/api/library/delete", "文件库删除"),
-    ("GET", "/api/library/download", "文件库下载"),
     ("GET", "/api/platform/commands", "读取全部功能指令清单"),
 ]
 

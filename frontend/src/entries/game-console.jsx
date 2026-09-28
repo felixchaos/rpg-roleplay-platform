@@ -1219,7 +1219,7 @@ function App() {
     if (runState.running) return;
     // 客户端动作命令(/retry /save /status /debug)= 本地执行,不发给 GM。
     // 此前 onSend 一律 startRun → "/retry" 被当玩家文本发给 GM,retry 从不执行(用户反馈)。
-    // /set /loc /time /rel /var /pin /note /memory /permission 是后端 directive,仍走 startRun 发送。
+    // /set /loc /time /rel /var /pin /note /permission 是后端 directive,仍走 startRun 发送。
     const typed = text.trim().toLowerCase();
     const typedId = (typed.startsWith('/') && CLIENT_CMDS.has(typed.slice(1))) ? typed.slice(1) : '';
     const cmdId = (pickedCommand && CLIENT_CMDS.has(pickedCommand.id)) ? pickedCommand.id : typedId;

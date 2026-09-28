@@ -31,7 +31,6 @@ struct GameConsoleView: View {
     @State private var providers: [PickerProvider] = []
     @State private var currentModelId = ""
     @State private var savesList: [SaveItem] = []
-    @State private var memMode = "normal"
     @State private var pendingExpanded = true
     @State private var rollbackTarget: Int?
     @State private var peekExpanded = false
@@ -83,7 +82,7 @@ struct GameConsoleView: View {
                         .frame(width: 320).transition(.move(edge: .trailing))
                 }
             }
-            // 左侧抽屉:存档切换 / 记忆模式 / 手动保存(两端都用覆盖抽屉,偶发操作)
+            // 左侧抽屉:存档切换 / 手动保存(两端都用覆盖抽屉,偶发操作)
             if showLeftDrawer {
                 Color.black.opacity(0.45).ignoresSafeArea()
                     .onTapGesture { withAnimation(.easeOut(duration: 0.2)) { showLeftDrawer = false } }
@@ -575,7 +574,7 @@ struct GameConsoleView: View {
         switch r { case "high": return Theme.danger; case "medium": return Theme.accent; default: return Theme.muted }
     }
 
-    // MARK: 左抽屉(存档切换 / 记忆模式 / 手动保存)
+    // MARK: 左抽屉(存档切换 / 手动保存)
     private var leftDrawer: some View {
         ZStack {
             Theme.bg.ignoresSafeArea()
@@ -586,17 +585,6 @@ struct GameConsoleView: View {
                         Text("手动保存").font(Theme.ui(15)).foregroundStyle(Theme.text); Spacer() }
                         .padding(.horizontal, 16).padding(.vertical, 8).contentShape(Rectangle())
                 }
-                Divider().overlay(Theme.lineSoft).padding(.horizontal, 12)
-                Text("记忆模式").font(Theme.ui(11, .semibold)).foregroundStyle(Theme.muted).tracking(1).padding(.horizontal, 16)
-                HStack(spacing: 6) {
-                    ForEach([("normal", "普通"), ("deep", "深度"), ("off", "关闭")], id: \.0) { m in
-                        Button { setMemMode(m.0) } label: {
-                            Text(m.1).font(Theme.ui(12.5, .medium)).foregroundStyle(memMode == m.0 ? Theme.onAccent : Theme.muted)
-                                .frame(maxWidth: .infinity).padding(.vertical, 7)
-                                .background(RoundedRectangle(cornerRadius: 8).fill(memMode == m.0 ? Theme.accent : Theme.panel2))
-                        }
-                    }
-                }.padding(.horizontal, 16)
                 if !snap.structuredUpdates.isEmpty {
                     Divider().overlay(Theme.lineSoft).padding(.horizontal, 12)
                     Text("本轮结构化更新").font(Theme.ui(11, .semibold)).foregroundStyle(Theme.muted).tracking(1).padding(.horizontal, 16)
@@ -688,10 +676,6 @@ struct GameConsoleView: View {
         if !store.demo { await store.api.saveGame(base: store.serverURL) }
         withAnimation { showLeftDrawer = false }
     }
-    private func setMemMode(_ m: String) {
-        memMode = m
-        if !store.demo { Task { await store.api.memoryMode(base: store.serverURL, mode: m) } }
-    }
     private func switchSave(_ s: SaveItem) async {
         withAnimation { showLeftDrawer = false }
         guard s.id != launch.id else { return }
@@ -732,7 +716,6 @@ struct GameConsoleView: View {
             return ChatMessage(role: .assistant, content: cleaned, serverIndex: t.index)
         }
         permission = snap.permission
-        memMode = snap.memoryModeValue
         if let m = snap.modelLabel { modelLabel = m }
         needsOpening = messages.isEmpty
     }

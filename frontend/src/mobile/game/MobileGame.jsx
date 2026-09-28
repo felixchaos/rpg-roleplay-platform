@@ -19,7 +19,7 @@ import { useStickToBottom } from '../../hooks/useStickToBottom.js';
 import { stripNarrativeOps } from '../../narrative-strip.js';
 import { SLASH_COMMANDS } from '../../game-composer.jsx';
 
-// 命令集【单一来源】= 共享 SLASH_COMMANDS(与游戏台 web / 酒馆一致,含 /memory /permission 全 13 条)。
+// 命令集【单一来源】= 共享 SLASH_COMMANDS(与游戏台 web / 酒馆一致,含 /permission 全 12 条)。
 // 映射成移动 sheet 需要的 {id, trig, label},按 groupKey 分组;不再各自维护子集列表。
 const SLASH_GROUPS = () => {
   const groups = {};
