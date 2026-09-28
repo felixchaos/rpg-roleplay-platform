@@ -11,12 +11,20 @@ _require_owner / _write_commit 是被 fork / 版本控制 / 世界书 / canon / 
 """
 from __future__ import annotations
 
+import json
+from functools import partial
+
 from fastapi import APIRouter
 from psycopg.types.json import Jsonb
 
 from ...perms import script_owned
 
 router = APIRouter()
+
+# commit payload 常带整行快照(before/after),里面有 created_at / updated_at 等 datetime。
+# Jsonb 默认 json.dumps 遇到 datetime 直接抛 TypeError → 整个写请求 500(canon PUT/POST
+# 一直这样挂着,因为 canon 的快照列带 created_at)。在唯一落点统一兜成字符串。
+_commit_payload_dumps = partial(json.dumps, ensure_ascii=False, default=str)
 
 def _require_owner(db, script_id: int, user_id: int):
     """确认 user 是 script owner，不是则 raise ValueError。
@@ -59,7 +67,8 @@ def _write_commit(
         VALUES (%s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
-        (script_id, parent_id, user_id, message, kind, Jsonb(payload), is_checkpoint),
+        (script_id, parent_id, user_id, message, kind,
+         Jsonb(payload, dumps=_commit_payload_dumps), is_checkpoint),
     ).fetchone()
     commit_id = int(row["id"])
 

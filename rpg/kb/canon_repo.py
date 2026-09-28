@@ -79,6 +79,76 @@ def upsert_canon_entity(db, script_id: int, logical_key: str, *, name: str, type
     ).fetchone()
 
 
+# ── 编辑器写侧:类型白名单 + logical_key 分配 ────────────────────────────────
+# REST(platform_app/api/script_edit/canon.py)与编辑器 agent 工具
+# (tools_dsl/command_tools_script_write/canon.py)共用的单一真相源。
+# 合法类型与提取链路一致(extract/resolve._reclassify_canon_type 的值域)。
+CANON_ENTITY_TYPES: tuple[str, ...] = (
+    "character", "faction", "organization", "location", "item", "concept",
+)
+CANON_TYPE_LABELS_ZH: dict[str, str] = {
+    "character": "人物", "faction": "势力", "organization": "组织",
+    "location": "地点", "item": "物品", "concept": "概念",
+}
+# 常见同义写法(md-editor front-matter / 编辑器 agent 偶尔写中文或近义英文)。
+_CANON_TYPE_SYNONYMS: dict[str, str] = {
+    **{zh: en for en, zh in CANON_TYPE_LABELS_ZH.items()},
+    "person": "character", "people": "character", "npc": "character", "角色": "character",
+    "org": "organization", "place": "location", "地名": "location",
+    "阵营": "faction", "道具": "item", "设定": "concept",
+}
+
+
+def normalize_canon_type(raw) -> str | None:
+    """把调用方给的类型归一成合法值;认不出(含空)返回 None。"""
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    low = s.lower()
+    if low in CANON_ENTITY_TYPES:
+        return low
+    return _CANON_TYPE_SYNONYMS.get(low) or _CANON_TYPE_SYNONYMS.get(s)
+
+
+def canon_type_choices_text() -> str:
+    """报错文案用:「人物 character / 势力 faction / …」。"""
+    return " / ".join(f"{CANON_TYPE_LABELS_ZH[t]} {t}" for t in CANON_ENTITY_TYPES)
+
+
+def canon_logical_key_base(name: str, entity_type: str) -> str:
+    """新建实体的 logical_key 基底 —— 与提取链路同口径,不另起一套规则。
+
+    名字规范化复用 extract.resolve._slug(简繁/全角归一、空白转下划线、去非法字符);
+    非 character 类型加「_<type>」后缀(extract.rebuild 重建 canon 同规则,
+    resolve 的 concept 也是「<slug>_concept」)。纯函数:同名同类型恒得同一基底。
+    """
+    from extract.resolve import _slug  # 懒 import:extract.resolve 顶层 import 本模块
+    base = _slug(name)
+    return base if entity_type == "character" else f"{base}_{entity_type}"
+
+
+def allocate_canon_logical_key(db, script_id: int, name: str, entity_type: str) -> str:
+    """分配一个本剧本内未被占用的 logical_key:基底空闲就用基底,否则 基底_2 / _3 …。
+
+    只做「选号」不落库;并发下两个请求可能选到同一个号,调用方用
+    `on conflict do nothing` 插入,撞了再调一次本函数重选即可。
+    """
+    base = canon_logical_key_base(name, entity_type)
+    like = base.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "\\_%"
+    rows = db.execute(
+        "select logical_key from kb_canon_entities where script_id = %s "
+        "and (logical_key = %s or logical_key like %s escape '\\')",
+        (script_id, base, like),
+    ).fetchall()
+    taken = {r["logical_key"] for r in rows}
+    if base not in taken:
+        return base
+    n = 2
+    while f"{base}_{n}" in taken:
+        n += 1
+    return f"{base}_{n}"
+
+
 def read_canon_entities(db, script_id: int, *, progress_chapter: int | None = None,
                         mode: ForeknowledgeMode = "none", entity_type: str | None = None,
                         limit: int | None = None, save_id: int | None = None) -> list[dict]:

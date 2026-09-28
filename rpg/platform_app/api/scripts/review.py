@@ -97,20 +97,27 @@ async def api_patch_canon(request: Request, script_id: int, user=Depends(require
             lk = (body.get("logical_key") or "").strip()
             if not lk:
                 return json_response({"ok": False, "error": "缺 logical_key"}, status_code=400)
+            from psycopg.types.json import Jsonb
             sets, args = [], []
             for col in ("summary",):
                 if col in body:
                     sets.append(f"{col}=%s")
-                    args.append(str(body[col]))
+                    args.append("" if body[col] is None else str(body[col]))
             if "importance" in body:
+                try:
+                    imp = int(body["importance"] or 0)
+                except (TypeError, ValueError):
+                    return json_response({"ok": False, "error": "「重要度」要填整数"}, status_code=400)
                 sets.append("importance=%s")
-                args.append(int(body["importance"]))
+                args.append(imp)
             if "aliases" in body and isinstance(body["aliases"], list):
-                from psycopg.types.json import Jsonb
                 sets.append("aliases=%s")
                 args.append(Jsonb(body["aliases"]))
             if not sets:
                 return json_response({"ok": False, "error": "无可更新字段"}, status_code=400)
+            # 人工复核改过 → 标 source='editor',重建知识库保留(与编辑器 REST / agent 工具同口径)
+            sets.append("attrs = coalesce(attrs, '{}'::jsonb) || %s::jsonb")
+            args.append(Jsonb({"source": "editor"}))
             args.extend([script_id, lk])
             n = db.execute(
                 f"update kb_canon_entities set {', '.join(sets)} where script_id=%s and logical_key=%s",

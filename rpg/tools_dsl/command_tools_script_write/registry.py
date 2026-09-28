@@ -441,8 +441,10 @@ def _write_document_manuscript_specs() -> list:
         ToolSpec(
             name="upsert_canon_entity",
             description=(
-                "创建或更新 canon 实体(按 logical_key)。logical_key 必填;"
-                "创建时还需 name 和 type。aliases 是字符串数组,attrs 是开放对象。"
+                "创建或更新 canon 实体(按 logical_key)。改已有实体必须给 logical_key"
+                "(先 list_canon_entities 查);新建必须给 name 和 type,logical_key 可省略,"
+                "省略时按名字和类型自动生成并在结果里返回。type 只能是 character / faction / "
+                "organization / location / item / concept。aliases 是字符串数组,attrs 是开放对象。"
                 "改前先向用户说清要改什么。"
             ),
             input_schema={
@@ -463,7 +465,7 @@ def _write_document_manuscript_specs() -> list:
                     "public_knowledge": {"type": "boolean"},
                     "importance": {"type": "integer"},
                 },
-                "required": ["logical_key"],
+                "required": [],
             },
             executor=_t_upsert_canon_entity,
             scope="script",
