@@ -38,3 +38,14 @@ export async function removeModel(api, { apiId, model, isAdmin }) {
   if (!isAdmin) throw adminOnlyError();
   return api.models.deleteModel({ api_id: apiId, real_name: modelKey(model) });
 }
+
+// 按 id 构造删除目标,不按当前视图过滤。
+// 校验弹窗的待删清单(diff 的 local_only)是拿**全局目录**和远端比出来的,而设置页一打开就自动
+// 同步,视图随即换成用户自己的清单(远端 + 手填),「目录里有、远端已下线」的模型本来就不在视图里。
+// 先拿视图过滤会把这些 id 直接丢掉:不删、不发请求、也不提示。视图外的 id 一律按平台内置目录
+// 模型处理:管理员走全局删除,普通用户拿到「只有管理员能改」。
+export function removeTargetsFor(viewModels, ids) {
+  const view = Array.isArray(viewModels) ? viewModels : [];
+  return (ids || []).map((id) => view.find((m) => m && m.id === id)
+    || { id, real_name: id, synced: false });
+}

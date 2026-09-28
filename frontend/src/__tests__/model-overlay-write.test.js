@@ -10,7 +10,7 @@
  * 模型只有管理员能改,普通用户明确报错,不发注定 403 的请求。
  */
 import { describe, it, expect, vi } from 'vitest';
-import { setModelEnabled, removeModel, isAdminOnlyModelEdit } from '../lib/model-overlay-write.js';
+import { setModelEnabled, removeModel, removeTargetsFor, isAdminOnlyModelEdit } from '../lib/model-overlay-write.js';
 
 function fakeApi() {
   return {
@@ -76,5 +76,24 @@ describe('removeModel', () => {
     const api = fakeApi();
     await expect(removeModel(api, { apiId: 'openai', model: builtin, isAdmin: false })).rejects.toSatisfy(isAdminOnlyModelEdit);
     expect(api.models.deleteModel).not.toHaveBeenCalled();
+  });
+});
+
+describe('removeTargetsFor', () => {
+  it('视图里有的 id 用视图里那条(带 synced 归属)', () => {
+    const view = [{ id: 'gpt-x', synced: true }, { id: 'gpt-y' }];
+    expect(removeTargetsFor(view, ['gpt-x'])).toEqual([{ id: 'gpt-x', synced: true }]);
+  });
+
+  it('视图外的 id 不丢,按内置目录模型处理(校验弹窗的下线模型来自全局目录)', () => {
+    const view = [{ id: 'gpt-x', synced: true }];
+    expect(removeTargetsFor(view, ['gpt-old', 'gpt-x'])).toEqual([
+      { id: 'gpt-old', real_name: 'gpt-old', synced: false },
+      { id: 'gpt-x', synced: true },
+    ]);
+  });
+
+  it('视图为空 / 未加载也照样构造', () => {
+    expect(removeTargetsFor(undefined, ['a'])).toEqual([{ id: 'a', real_name: 'a', synced: false }]);
   });
 });

@@ -15,7 +15,7 @@ import {
 import { ApiDetailPanel, ApiModelsList, ModelNameCell, HealthDot } from './model-list.jsx';
 import { AddModelModal, EditApiModal, VisibilityModal, ValidateModal } from './model-modals.jsx';
 import { ProviderCard, ProviderConfigSection } from './provider-config.jsx';
-import { setModelEnabled, removeModel, isAdminOnlyModelEdit } from '../../lib/model-overlay-write.js';
+import { setModelEnabled, removeModel, removeTargetsFor, isAdminOnlyModelEdit } from '../../lib/model-overlay-write.js';
 import CSContainer from '@cloudscape-design/components/container';
 import CSHeader from '@cloudscape-design/components/header';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
@@ -212,6 +212,8 @@ function ModelsSection() {
     const m = api?.models.find(m => m.id === mId);
     const wasEnabled = m?.enabled ?? true;
     setOneModelEnabled(apiId, mId, !wasEnabled);
+    // 演示数据(匿名访客 / ?demo=1)不是谁的真实配置:只在本地翻转,不发请求。
+    if (useMock) return;
     try {
       await setModelEnabled(window.api, { apiId, model: m || { id: mId }, enabled: !wasEnabled, isAdmin: isAdminUser });
     } catch (e) {
@@ -268,8 +270,16 @@ function ModelsSection() {
     }
   };
   const removeModels = async (apiId, ids) => {
+    if (useMock) {  // 演示数据:只在本地移除,不发请求
+      setApis(arr => arr.map(a => a.id === apiId
+        ? { ...a, models: a.models.filter(m => !ids.includes(m.id)) }
+        : a));
+      return;
+    }
     const api = apis.find(a => a.id === apiId);
-    const targets = (api?.models || []).filter(m => ids.includes(m.id));
+    // 目标按 id 构造:校验弹窗给的下线模型来自全局目录,自动同步后多半不在当前视图里,
+    // 按视图过滤会把它们静默丢掉(见 lib/model-overlay-write.js removeTargetsFor)。
+    const targets = removeTargetsFor(api?.models, ids);
     // 只从列表里拿掉真删成功的;删不掉的(普通用户碰内置模型 / 请求失败)留在原位并提示,
     // 不再乐观删掉、刷新又冒出来。
     const results = await Promise.all(targets.map(m =>
