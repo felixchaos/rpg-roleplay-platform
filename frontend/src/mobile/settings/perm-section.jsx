@@ -1,23 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Icon } from '../icons.jsx';
-import { lsSetJSON } from '../../lib/storage.js';
 import { SetGroup, usePrefSave } from './shared.jsx';
 
 /* ────────────────────────────────────────────────────────────────── */
 /* SECTION: 权限 (permissions)                                         */
 /* ────────────────────────────────────────────────────────────────── */
-const HIGH_RISK_ALL = ['timeline.pending_jump','player.background','world.constraints','relationships.*.tone'];
-const CUSTOM_WL_RE = /^[a-zA-Z_][a-zA-Z0-9_.*]*$/;
+// 只保留后端真的会读的默认权限模式。「高风险字段白名单」「自定义白名单」没有任何后端读方
+// (写入闸在完全访问模式下一律放行,没有按字段弹确认的机制),已下线 —— 与 web / iOS 同批,
+// 理由见 components/settings/perm-section.jsx。
 
 function PermissionsSection({ nav }) {
   const { t } = useTranslation();
   const save = usePrefSave('perm');
   const [mode, setMode] = useState('review');
-  const [whitelist, setWhitelist] = useState(['timeline.pending_jump','player.background','world.constraints']);
-  const [custom, setCustom] = useState([]);
-  const [customInput, setCustomInput] = useState('');
-  const [customErr, setCustomErr] = useState('');
   // 审计日志
   const [auditEntries, setAuditEntries] = useState([]);
   const [auditLoading, setAuditLoading] = useState(false);
@@ -34,36 +30,10 @@ function PermissionsSection({ nav }) {
         const p = (r && r.preferences) || {};
         const v = p['perm.default_mode'] || p.default_perm_mode;
         if (v) setMode(v);
-        const wl = p['perm.high_risk_whitelist'];
-        if (Array.isArray(wl)) setWhitelist(wl);
-        const cwl = p['permissions.custom_whitelist'];
-        if (Array.isArray(cwl)) setCustom(cwl);
       } catch (_) {}
     })();
     return () => { cancelled = true; };
   }, []);
-
-  const toggleWhitelist = (field) => {
-    const next = whitelist.includes(field) ? whitelist.filter(f => f!==field) : [...whitelist, field];
-    setWhitelist(next); save('high_risk_whitelist', next);
-  };
-
-  const saveCustom = async (next) => {
-    setCustom(next);
-    try { await window.api.account.preferences({ 'permissions.custom_whitelist': next }); } catch (_) {}
-    lsSetJSON('perm.custom_whitelist', next);
-  };
-
-  const addCustom = () => {
-    const val = customInput.trim();
-    if (!val) { setCustomErr(t('mobile.settings.perm.custom_err_empty')); return; }
-    if (val.length > 80) { setCustomErr(t('mobile.settings.perm.custom_err_too_long')); return; }
-    if (!CUSTOM_WL_RE.test(val)) { setCustomErr(t('mobile.settings.perm.custom_err_format')); return; }
-    if (HIGH_RISK_ALL.includes(val)) { setCustomErr(t('mobile.settings.perm.custom_err_builtin')); return; }
-    if (custom.includes(val)) { setCustomErr(t('mobile.settings.perm.custom_err_exists')); return; }
-    saveCustom([...custom, val]);
-    setCustomInput(''); setCustomErr('');
-  };
 
   const loadAudit = useCallback(async () => {
     setAuditLoading(true); setAuditErr('');
@@ -110,67 +80,6 @@ function PermissionsSection({ nav }) {
           </div>
         </div>
 
-        {/* 高风险字段白名单 */}
-        <div className="pl-setrow" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 10 }}>
-          <div>
-            <strong>{t('mobile.settings.perm.high_risk_whitelist')}</strong>
-            <div style={{ fontSize: 11.5, color: 'var(--muted-2)', marginTop: 2 }}>{t('mobile.settings.perm.high_risk_whitelist_desc')}</div>
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
-            {HIGH_RISK_ALL.map(field => (
-              <button
-                key={field}
-                className={whitelist.includes(field) ? 'pill accent' : 'pill'}
-                onClick={() => toggleWhitelist(field)}
-                style={{ cursor: 'pointer', fontSize: 11, height: 28, transition: 'all .15s' }}
-              >
-                {field}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* 自定义白名单 */}
-        <div className="pl-setrow" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 10 }}>
-          <div>
-            <strong>{t('mobile.settings.perm.custom_whitelist')}</strong>
-            <div style={{ fontSize: 11.5, color: 'var(--muted-2)', marginTop: 2 }}>
-              {t('mobile.settings.perm.custom_whitelist_format_prefix')} <span className="mono">player.hp</span> {t('mobile.settings.perm.custom_whitelist_format_or')} <span className="mono">world.*</span>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8, width: '100%' }}>
-            <input
-              className="pl-input"
-              style={{ flex: 1, height: 40, fontSize: 13 }}
-              value={customInput}
-              placeholder="player.custom_field"
-              onChange={(e) => { setCustomInput(e.target.value); if (customErr) setCustomErr(''); }}
-              onKeyDown={(e) => { if (e.key==='Enter') { e.preventDefault(); addCustom(); } }}
-            />
-            <button className="pl-btn-primary" style={{ height: 40, width: 64, fontSize: 13, flexShrink: 0 }} onClick={addCustom}>
-              <Icon name="plus" size={14} />
-            </button>
-          </div>
-          {customErr && <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: -4 }}>{customErr}</div>}
-          {custom.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {custom.map(entry => (
-                <div key={entry} style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                  padding: '4px 10px', borderRadius: 6, border: '1px solid var(--line-soft)',
-                  background: 'var(--panel-2)', fontSize: 12.5, fontFamily: 'var(--font-mono)',
-                }}>
-                  {entry}
-                  <button
-                    onClick={() => saveCustom(custom.filter(e => e!==entry))}
-                    style={{ color: 'var(--danger)', fontSize: 14, lineHeight: 1, padding: 0 }}
-                  >×</button>
-                </div>
-              ))}
-            </div>
-          )}
-          {custom.length===0 && <span style={{ fontSize: 12, color: 'var(--muted)' }}>{t('mobile.settings.perm.no_custom_entries')}</span>}
-        </div>
       </SetGroup>
 
       {/* 审计日志 */}

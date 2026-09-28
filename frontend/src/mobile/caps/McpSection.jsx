@@ -1,9 +1,10 @@
-/* Extracted from pages/MobileCaps.jsx — mechanical split, byte-for-byte. */
+/* Extracted from pages/MobileCaps.jsx. */
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Icon } from '../icons.jsx';
 import { Sheet } from '../Sheet.jsx';
 import { Toggle, StatusPill, MField, EmptyState } from './shared.jsx';
+import { validateNewMcpServer } from '../../lib/mcp-validate.js';
 
 /* ──────────────────────────────────────────────────────────────────
    MCP
@@ -120,10 +121,13 @@ function McpSection({ toast }) {
       if (form.transport === 'http') body.url = form.command;
       else body.command = form.command;
       if (Object.keys(envObj).length) body.env = envObj;
-      await window.api.mcp.upsert(body);
-      toast(editTarget ? t('mobile.caps.mcp.toast.saved') : t('mobile.caps.mcp.toast.added'), 'ok');
-      if (!editTarget) {
-        try { await window.api.mcp.validate({ name: form.name }); } catch (_) {}
+      const saved = await window.api.mcp.upsert(body);
+      if (editTarget) {
+        toast(t('mobile.caps.mcp.toast.saved'), 'ok');
+      } else {
+        // 校验只认 id:用 upsert 回的 server_id(以前发 {name},后端读 id → 校验从没跑过)。
+        const v = await validateNewMcpServer(window.api, saved?.server_id);
+        toast(v.message, v.ok ? 'ok' : 'warn');
       }
       setAddOpen(false);
       load();
@@ -198,7 +202,7 @@ function McpSection({ toast }) {
             </div>
           </MField>
           <MField label={form.transport === 'http' ? 'URL' : t('mobile.caps.mcp.form.command_label')} desc={form.transport === 'http' ? 'https://host:port' : t('mobile.caps.mcp.form.command_desc')}>
-            <input className="pl-input mono" placeholder={form.transport === 'http' ? 'https://localhost:7300' : 'uvx my-mcp'} value={form.command} onChange={e => setForm(f => ({ ...f, command: e.target.value }))} style={{ fontSize: 16 }} />
+            <input className="pl-input mono" placeholder={form.transport === 'http' ? 'https://localhost:7300' : 'npx @modelcontextprotocol/server-filesystem /data'} value={form.command} onChange={e => setForm(f => ({ ...f, command: e.target.value }))} style={{ fontSize: 16 }} />
           </MField>
           <MField label={t('mobile.caps.mcp.form.env_label')} desc={t('mobile.caps.mcp.form.env_desc')}>
             <textarea className="pl-input" placeholder={t('mobile.caps.mcp.form.env_placeholder')} value={form.env} onChange={e => setForm(f => ({ ...f, env: e.target.value }))} style={{ minHeight: 72, fontSize: 16 }} />

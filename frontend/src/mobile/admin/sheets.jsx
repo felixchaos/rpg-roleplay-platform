@@ -50,7 +50,17 @@ function InputSheet({ title, fields, busy, onConfirm, onCancel }) {
           {fields.map((f) => (
             <div key={f.key}>
               <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>{f.label}</div>
-              {f.multiline ? (
+              {Array.isArray(f.options) ? (
+                // 枚举字段用下拉:值必须是后端认的那几个,不能让人手打(打错 / 打中文后端恒 400)。
+                <select
+                  value={vals[f.key]}
+                  onChange={(e) => setVals((v) => ({ ...v, [f.key]: e.target.value }))}
+                  style={{ width: '100%', background: 'var(--panel-2)', border: '1px solid var(--line)', borderRadius: 10, padding: '8px 10px', color: 'var(--text)', fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box' }}
+                >
+                  <option value="">{f.placeholder || ''}</option>
+                  {f.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              ) : f.multiline ? (
                 <textarea
                   value={vals[f.key]}
                   onChange={(e) => setVals((v) => ({ ...v, [f.key]: e.target.value }))}

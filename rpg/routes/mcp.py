@@ -37,10 +37,13 @@ async def api_mcp_server(
     api_user: dict[str, Any] | None = Depends(get_current_admin_strict),
 ) -> JSONResponse:
     from app import tool_payload, upsert_mcp_server
+    from tools_dsl.tool_registry import mcp_server_id
     try:
         body_dict = body.model_dump()
         catalog = upsert_mcp_server(body_dict)
-        return json_response({"ok": True, "mcp": catalog, "tools": tool_payload()})
+        # server_id:前端新增后拿它去 /api/mcp/server/validate(那边只认 id,不认表单里的 name)。
+        return json_response({"ok": True, "mcp": catalog, "tools": tool_payload(),
+                              "server_id": mcp_server_id(body_dict)})
     except (PermissionError, ValueError) as exc:
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
 

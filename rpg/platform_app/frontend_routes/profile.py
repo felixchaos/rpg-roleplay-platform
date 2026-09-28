@@ -137,8 +137,16 @@ def _ensure_profile_extras_table() -> None:
 
 @router.post("/api/profile/visibility")
 async def api_profile_visibility(request: Request):
+    """兼容旧客户端的写入口(当前 web / 手机 / iOS 都不再调用)。
+
+    profile_extras.visibility 全站没有读方 —— 「资料字段可见性」逐项配置是装饰,三端已下线。
+    已发出去的 iOS 版本「编辑资料 → 公开个人主页」开关打的就是这里({public_profile: bool}),
+    而公开成就墙读的是 user_preferences.public_profile:这里把它同步过去,旧版本的开关也能生效。
+    """
     user = require_user(request)
     body = await request.json() or {}
+    if not isinstance(body, dict):
+        return _bad("请求内容必须是 JSON 对象")
     from psycopg.types.json import Jsonb
     with connect() as db:
         db.execute(
@@ -149,6 +157,16 @@ async def api_profile_visibility(request: Request):
             """,
             (user["id"], Jsonb(body)),
         )
+        if isinstance(body.get("public_profile"), bool):
+            db.execute(
+                """
+                insert into user_preferences(user_id, preferences) values (%s, %s)
+                on conflict (user_id) do update set
+                  preferences = user_preferences.preferences || excluded.preferences,
+                  updated_at = now()
+                """,
+                (user["id"], Jsonb({"public_profile": body["public_profile"]})),
+            )
     return json_response({"ok": True, "visibility": body})
 
 

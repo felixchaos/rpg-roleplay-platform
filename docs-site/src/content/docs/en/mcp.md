@@ -15,7 +15,7 @@ Entry point: "MCP" in the left navigation bar (route: `#mcp`). On mobile, switch
 
 Each MCP server requires a transport type:
 
-- **stdio · Local command**: Launches a subprocess on the current machine and communicates via standard input/output. The command can be a simple invocation like `uvx my-mcp` or a full shell command.
+- **stdio · Local command**: Launches a subprocess on the current machine and communicates via standard input/output. Enter the whole command line, e.g. `npx @modelcontextprotocol/server-filesystem /data`. For safety only `npx` / `node` / `python` may be used (no arbitrary shell commands), and `npx` only accepts official `@modelcontextprotocol/` packages or simple package names. The server is validated right after it is added, and you are told if the command can't be found on the server.
 - **http · Remote HTTP**: Connects to a running MCP HTTP service at a remote URL (e.g., `https://host:port`).
 
 ### Connection Status
@@ -67,7 +67,7 @@ Click the "Validate" button in the top-right of the page. The platform checks ea
 ## FAQ
 
 **The GM isn't calling MCP tools?**
-Check all of the following: ① the server toggle is on; ② the card status shows "Connected" rather than "Not connected"; ③ the model in use supports tool calling (some lightweight models do not); ④ for stdio mode, the required command (e.g., `uvx`) is installed on the local machine and executable.
+Check all of the following: ① the server toggle is on; ② the card status shows "Connected" rather than "Not connected"; ③ the model in use supports tool calling (some lightweight models do not); ④ for stdio mode, the required command (e.g., `npx`) is installed on the local machine and executable.
 
 **Status stays "Not connected" after adding the server?**
 For stdio: verify the command runs successfully in a terminal. For http: confirm the target URL is reachable from the server side and is not blocked by a firewall. Click the "Validate" button to retry, or check the logs for specific error messages.

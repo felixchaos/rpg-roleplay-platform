@@ -1,4 +1,4 @@
-/* MobileAdmin — SectionCsamReports(admin-csam-reports)。纯机械从 pages/MobileAdmin.jsx 拆出,逐字节等价。 */
+/* MobileAdmin — SectionCsamReports(admin-csam-reports)。从 pages/MobileAdmin.jsx 拆出。 */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { Icon } from '../icons.jsx';
@@ -39,6 +39,17 @@ function SectionCsamReports({ nav }) {
   }
 
   const decisionColor = { founded: 'var(--danger)', escalate: 'var(--info)', unfounded: 'var(--muted)' };
+  // 取值与后端 admin_csam_decision 一致(founded | unfounded | escalate),文案与桌面管理页共用。
+  const decisionLabel = {
+    founded: t('admin_page.csam.badge_founded'),
+    escalate: t('admin_page.csam.badge_escalate'),
+    unfounded: t('admin_page.csam.badge_unfounded'),
+  };
+  const decisionOptions = [
+    { value: 'founded', label: t('admin_page.csam.decision_founded') },
+    { value: 'escalate', label: t('admin_page.csam.decision_escalate') },
+    { value: 'unfounded', label: t('admin_page.csam.decision_unfounded') },
+  ];
 
   return (
     <>
@@ -68,7 +79,7 @@ function SectionCsamReports({ nav }) {
                   <div style={{ padding: '11px 13px' }}>
                     <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
                       <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: r.status === 'pending' ? 'var(--danger)' : 'var(--muted)' }}>{r.status === 'pending' ? t('mobile.admin.csam.status_pending') : t('mobile.admin.csam.status_decided')}</span>
-                      {r.decision && <span style={{ fontSize: 11, color: decisionColor[r.decision] || 'var(--muted)' }}>{r.decision}</span>}
+                      {r.decision && <span style={{ fontSize: 11, color: decisionColor[r.decision] || 'var(--muted)' }}>{decisionLabel[r.decision] || r.decision}</span>}
                       <span style={{ fontSize: 10.5, color: 'var(--muted-3)', marginLeft: 'auto' }}>#{r.id}</span>
                     </div>
                     <div style={{ fontSize: 13, color: 'var(--text-quiet)' }}>{t('mobile.admin.csam.reported_user')}{r.reported_username || `uid:${r.reported_user_id}`}</div>
@@ -91,7 +102,7 @@ function SectionCsamReports({ nav }) {
         <InputSheet
           title={t('mobile.admin.csam.decide_sheet_title', { id: decideTarget.id })}
           fields={[
-            { key: 'decision', label: t('mobile.admin.csam.decision_label'), placeholder: 'founded' },
+            { key: 'decision', label: t('mobile.admin.csam.decision_label'), options: decisionOptions, placeholder: t('admin_page.csam.decision_select_placeholder') },
             { key: 'notes', label: t('mobile.admin.csam.notes_label'), multiline: true, placeholder: t('mobile.admin.csam.notes_placeholder') },
           ]}
           busy={busy} onConfirm={doDecide} onCancel={() => setDecideTarget(null)}

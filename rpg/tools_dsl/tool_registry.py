@@ -302,8 +302,22 @@ def _validate_npx_args(args: list[str]) -> None:
             )
 
 
+def _mcp_display_name(server: dict[str, Any]) -> str:
+    # 前端「新增 MCP 服务器」表单发的是 name(web / 手机都是);存量 / 种子配置用 display_name。
+    return str(server.get("display_name") or server.get("name") or "").strip()
+
+
+def mcp_server_id(server: dict[str, Any]) -> str:
+    """该配置落库后的 server id(与 _normalize_mcp_server 同一口径)。
+
+    以前只看 id / display_name,表单发的 name 被丢掉 → 所有新服务器 id 都是 "mcp_server",
+    加第二个就覆盖第一个。upsert 路由用它把 id 回给前端,前端拿 id 去校验。
+    """
+    return _slugify(str(server.get("id") or _mcp_display_name(server) or "mcp_server"))
+
+
 def _normalize_mcp_server(server: dict[str, Any], *, validate: bool = True) -> dict[str, Any]:
-    server_id = _slugify(str(server.get("id") or server.get("display_name") or "mcp_server"))
+    server_id = mcp_server_id(server)
     transport = str(server.get("transport") or "stdio").strip()
 
     # HTTP transport 配置
@@ -320,6 +334,11 @@ def _normalize_mcp_server(server: dict[str, Any], *, validate: bool = True) -> d
     if not isinstance(env, dict):
         env = {}
     command = str(server.get("command") or "").strip()
+    # 表单的命令框是一整行(「npx @modelcontextprotocol/server-filesystem /data」)。没单独给 args
+    # 时按空白拆成命令 + 参数,否则整行被当命令名去比白名单,带参数的 stdio 服务器一律被拒。
+    # 拆完照样走下面的白名单与参数校验,安全边界不变。
+    if command and not args and len(command.split()) > 1:
+        command, *args = command.split()
 
     # 根据 transport 类型进行不同的验证（validate=False 用于加载已有配置时跳过校验）
     if transport == "http" and validate:
@@ -344,7 +363,7 @@ def _normalize_mcp_server(server: dict[str, Any], *, validate: bool = True) -> d
 
     return {
         "id": server_id,
-        "display_name": str(server.get("display_name") or server_id).strip(),
+        "display_name": _mcp_display_name(server) or server_id,
         "transport": transport,
         "command": command,
         "args": [str(item) for item in args],

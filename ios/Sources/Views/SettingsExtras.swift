@@ -59,17 +59,24 @@ struct MemoryView: View {
 
     var body: some View {
         SettingsScaffold(title: "记忆") {
-            card("检索与摘要") {
-                sliderRow("召回深度", $recall, 2...20, 1, "%.0f") { save("memory.recall_depth", Int(recall)) }
-                sliderRow("摘要窗口", $summary, 3...20, 1, "%.0f") { save("memory.summary_window", Int(summary)) }
+            // 文案按后端真实语义(context_providers/memory.py):召回条数按记忆类别各自计算;
+            // summary_window 是归档检查间隔、auto_archive_after_turns 是事实保留回合数(只影响自动事实)。
+            // 与 web / 手机端设置页同一口径。
+            card("检索与归档") {
+                sliderRow("每类召回条数", $recall, 2...20, 1, "%.0f") { save("memory.recall_depth", Int(recall)) }
+                sliderRow("归档检查间隔", $summary, 3...20, 1, "%.0f") { save("memory.summary_window", Int(summary)) }
                 sliderRow("Token 预算", $budget, 200...2000, 50, "%.0f") { save("memory.token_budget", Int(budget)) }
-                sliderRow("自动归档回合", $archive, 10...200, 5, "%.0f") { save("memory.auto_archive_after_turns", Int(archive)) }
-                sliderRow("固定记忆上限", $pinnedMax, 5...100, 1, "%.0f") { save("memory.pinned_max", Int(pinnedMax)) }
+                sliderRow("事实保留回合数", $archive, 10...200, 5, "%.0f") { save("memory.auto_archive_after_turns", Int(archive)) }
+                sliderRow("固定记忆条数上限", $pinnedMax, 5...100, 1, "%.0f") { save("memory.pinned_max", Int(pinnedMax)) }
+                Text(loc: "事实、笔记、能力、资源、固定记忆每一类各取最近若干条交给 GM,总量受 Token 预算约束。早于「事实保留回合数」的自动事实不再注入(不删除),笔记、固定记忆、能力、资源不受影响。")
+                    .font(Theme.ui(11.5)).foregroundStyle(Theme.muted2)
             }
             card("记忆桶") {
                 toggle("固定记忆", $bPinned) { save("memory.bucket_pinned_enabled", bPinned) }
-                toggle("世界知识", $bWorld) { save("memory.bucket_world_enabled", bWorld) }
-                toggle("角色知识", $bChar) { save("memory.bucket_character_enabled", bChar) }
+                toggle("主线、目标、事实与笔记", $bWorld) { save("memory.bucket_world_enabled", bWorld) }
+                toggle("能力与资源", $bChar) { save("memory.bucket_character_enabled", bChar) }
+                Text(loc: "关闭某一桶后,每轮的记忆注入里不再包含这一类。")
+                    .font(Theme.ui(11.5)).foregroundStyle(Theme.muted2)
             }
         } onLoad: { await load() }
     }
@@ -91,15 +98,13 @@ struct MemoryView: View {
 }
 
 // MARK: 权限
+// 只保留后端真的会读的默认权限模式(新建存档时注入 state.permissions.mode)。「高风险字段白名单」
+// 「自定义白名单」没有任何后端读方(写入闸在完全访问模式下一律放行,没有按字段弹确认的机制),
+// 已下线 —— 与 web / 手机端同批。
 struct PermissionsView: View {
     @EnvironmentObject var store: AppStore
     @State private var mode = "review"
-    @State private var highRisk: Set<String> = []
-    @State private var custom: [String] = []
-    @State private var newEntry = ""
     @State private var loaded = false
-
-    private let highRiskAll = ["timeline.pending_jump", "player.background", "world.constraints", "relationships.*.tone"]
 
     var body: some View {
         SettingsScaffold(title: "权限") {
@@ -109,47 +114,13 @@ struct PermissionsView: View {
                 }
                 Text("控制 GM 写状态前是否需要你确认。").font(Theme.ui(11.5)).foregroundStyle(Theme.muted2)
             }
-            card("高风险字段白名单") {
-                ForEach(highRiskAll, id: \.self) { k in
-                    Toggle(isOn: Binding(get: { highRisk.contains(k) }, set: { on in
-                        if on { highRisk.insert(k) } else { highRisk.remove(k) }
-                        save("perm.high_risk_whitelist", Array(highRisk))
-                    })) { Text(k).font(Theme.ui(12.5).monospaced()).foregroundStyle(Theme.text) }.tint(Theme.accent)
-                }
-            }
-            card("自定义白名单") {
-                ForEach(custom, id: \.self) { e in
-                    HStack {
-                        Text(e).font(Theme.ui(12.5).monospaced()).foregroundStyle(Theme.text)
-                        Spacer()
-                        Button { custom.removeAll { $0 == e }; save("permissions.custom_whitelist", custom) } label: {
-                            Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.muted2)
-                        }
-                    }
-                }
-                HStack(spacing: 8) {
-                    TextField("如 world.weather", text: $newEntry).font(Theme.ui(13)).foregroundStyle(Theme.text).tint(Theme.accent)
-                        .autocorrectionDisabled().textInputAutocapitalization(.never)
-                        .padding(.horizontal, 10).padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.panel2)).overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.line, lineWidth: 1))
-                    Button("添加") { addCustom() }.font(Theme.ui(13, .semibold)).foregroundStyle(Theme.accent)
-                }
-            }
         } onLoad: { await load() }
-    }
-    private func addCustom() {
-        let e = newEntry.trimmingCharacters(in: .whitespaces)
-        guard !e.isEmpty, !custom.contains(e) else { return }
-        custom.append(e); newEntry = ""; save("permissions.custom_whitelist", custom)
     }
     private func save(_ k: String, _ v: Any) { guard loaded, !store.demo else { return }; Task { try? await store.api.setPreferences(base: store.serverURL, [k: v]) } }
     private func load() async {
-        if store.demo { custom = ["world.weather"]; highRisk = ["player.background"]; loaded = true; return }
+        if store.demo { loaded = true; return }
         guard let p = try? await store.api.profile(base: store.serverURL) else { loaded = true; return }
-        let pr = p.prefs
-        mode = readStr(pr, ["perm.default_mode"], "review")
-        if let arr = (pr["perm.high_risk_whitelist"] as? [String]) { highRisk = Set(arr) }
-        if let arr = (pr["permissions.custom_whitelist"] as? [String]) ?? (pr["perm.custom_whitelist"] as? [String]) { custom = arr }
+        mode = readStr(p.prefs, ["perm.default_mode"], "review")
         loaded = true
     }
 }

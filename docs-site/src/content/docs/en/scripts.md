@@ -41,14 +41,10 @@ The Status column in the list shows which modules are ready for each script. Mis
 
 The vector index has four sub-modules: chapter text (chunks), NPC character cards (cards), worldbook, and canon characters. Each can be rebuilt independently without re-embedding everything. Progress for each sub-module is shown in the Vector Index card on the Overview tab.
 
-### Sharing Mode
+### Publishing and References
 
-Scripts have four sharing modes (author only):
-
-- **Private**: Not visible to others
-- **Public**: Listed in the Online Script Library; anyone can import
-- **Fixed Snapshot**: A specific historical version is published; subsequent edits do not affect what subscribers see
-- **Floating Latest**: Always publishes the most recent version
+- **Publishing**: A script is visible only to you by default. In the action menu at the top right of the detail panel, choose **Share to Public Library** to list it in the Online Script Library, where others can browse and import it. Choose **Remove from Public Library** to take it back at any time.
+- **References**: If a script references another script, its lore lookups (worldbook, characters, timeline, etc.) read the referenced script's content. A referencing script shows **Reference mode** and the referenced script's number at the top of the detail panel; the author can click **Stop referencing** to go back to reading the script's own lore.
 
 ---
 
@@ -109,9 +105,9 @@ Click **View Chapters** at the top of the detail panel:
 
 Select a script → detail panel **More** dropdown → **Build Vector Index**, or click **Redo** on an individual sub-module card in the Overview tab. Each sub-module (chapters / cards / worldbook / canon) can be re-embedded independently.
 
-### Set Sharing Mode
+### Publish a Script
 
-Select your own script → the **Sharing Mode** selector appears at the top of the detail panel → choose Public, Fixed Snapshot, or Floating Latest. When choosing Fixed Snapshot, you must also select a specific historical version. The system checks the review status before publishing; scripts that have not been reviewed must complete **Review Settings** first.
+Select your own script → open the action menu at the top right of the detail panel → **Share to Public Library**. The system checks the review status before publishing; scripts that have not been reviewed must complete **Review Settings** first. To withdraw it, choose **Remove from Public Library** in the same menu.
 
 ### Fork a Subscribed Script
 

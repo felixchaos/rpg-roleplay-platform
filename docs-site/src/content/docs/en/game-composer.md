@@ -58,7 +58,7 @@ Type `/` in the input box to open the command picker. Use `↑↓` to navigate, 
 | Command | Description |
 |---|---|
 | `/pin <text>` | Add content to pinned memory; the GM reads it every turn |
-| `/note <text>` | Private player note; does not affect the GM |
+| `/note <text>` | Adds a player note. The GM sees the most recent notes (within the memory budget, so not every note every turn), and notes win over automatically extracted facts when they conflict |
 
 ### Mode
 

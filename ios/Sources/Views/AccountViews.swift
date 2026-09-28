@@ -46,7 +46,9 @@ struct EditProfileView: View {
                         card("隐私") {
                             Toggle(isOn: $isPublic) { Text(loc: "公开个人主页").font(Theme.ui(14)).foregroundStyle(Theme.text) }
                                 .tint(Theme.accent).disabled(store.demo)
-                                .onChange(of: isPublic) { _, v in if !store.demo { Task { try? await store.api.setProfileVisibility(base: store.serverURL, isPublic: v) } } }
+                                // 写偏好 public_profile(成就墙读的就是它)。以前写的是 /api/profile/visibility
+                                // (profile_extras.visibility),没有任何后端读方,开关拨了等于没拨。
+                                .onChange(of: isPublic) { _, v in if !store.demo { Task { try? await store.api.setPreferences(base: store.serverURL, ["public_profile": v]) } } }
                             Text(loc: "开启后,他人可通过你的公开主页查看成就墙等。").font(Theme.ui(11)).foregroundStyle(Theme.muted2)
                         }
                     }.padding(16)
@@ -77,7 +79,6 @@ struct EditProfileView: View {
             if let u = p.username { username = u }
             if let b = p.prefs["bio"] as? String { bio = b }
             if let pub = p.prefs["public_profile"] as? Bool { isPublic = pub }
-            else if let vis = p.prefs["visibility"] as? [String: Any], let pub = vis["public_profile"] as? Bool { isPublic = pub }
         }
     }
     private func save() async {
@@ -281,13 +282,10 @@ struct AccountDataView: View {
     @State private var deleting = false
     @State private var deleteMsg: String?
 
-    // 隐私与通知开关
+    // 隐私开关:只保留后端真的会读的 public_profile(公开成就墙)。「允许被搜索」「分享匿名使用数据」
+    // 「分享崩溃报告」「两步验证」「邮件通知」全站没有后端读方(没有用户搜索 / 用量上报 / 2FA 实现 /
+    // 按偏好发的邮件),是装饰,已下线 —— 与 web / 手机端同批。
     @State private var privPublicProfile = false   // default false
-    @State private var privSearchable    = true    // default true
-    @State private var privShareUsage    = false   // default false
-    @State private var privShareCrash    = true    // default true
-    @State private var privTwoFA         = true    // default true
-    @State private var privEmailNotif    = true    // default true
 
     private var lang: String { store.language.hasPrefix("en") ? "en" : "zh-CN" }
     private let legalBase = "https://play.stellatrix.icu/legal"
@@ -303,18 +301,8 @@ struct AccountDataView: View {
                     rowAction(clearing ? "清理中…" : "清空所有游戏存档", "trash", busy: clearing)
                 }.disabled(clearing || store.demo)
             }
-            card("隐私与通知") {
+            card("隐私") {
                 privToggle("公开主页",         isOn: $privPublicProfile, key: "public_profile")
-                Divider().overlay(Theme.lineSoft)
-                privToggle("允许被搜索",        isOn: $privSearchable,    key: "searchable")
-                Divider().overlay(Theme.lineSoft)
-                privToggle("分享匿名使用数据",  isOn: $privShareUsage,    key: "share_usage")
-                Divider().overlay(Theme.lineSoft)
-                privToggle("分享崩溃报告",      isOn: $privShareCrash,    key: "share_crash")
-                Divider().overlay(Theme.lineSoft)
-                privToggle("两步验证",          isOn: $privTwoFA,         key: "two_fa")
-                Divider().overlay(Theme.lineSoft)
-                privToggle("邮件通知",          isOn: $privEmailNotif,    key: "email_notif")
             }
             card("法律与协议") {
                 ForEach(Array(legalDocs.enumerated()), id: \.offset) { i, d in
@@ -388,10 +376,5 @@ struct AccountDataView: View {
         guard let p = try? await store.api.profile(base: store.serverURL) else { return }
         let prefs = p.prefs
         if let v = prefs["public_profile"] as? Bool { privPublicProfile = v }
-        if let v = prefs["searchable"]     as? Bool { privSearchable    = v }
-        if let v = prefs["share_usage"]    as? Bool { privShareUsage    = v }
-        if let v = prefs["share_crash"]    as? Bool { privShareCrash    = v }
-        if let v = prefs["two_fa"]         as? Bool { privTwoFA         = v }
-        if let v = prefs["email_notif"]    as? Bool { privEmailNotif    = v }
     }
 }

@@ -17,7 +17,7 @@ The top of the panel shows two lines of text: the **main quest** from the script
 
 ### Pinned Memory
 
-A list of entries marked with a pin icon. Pinned memory is **always injected into context** when the GM generates a response — it will never be forgotten due to being too far back in the conversation. Use it for character settings, key agreements, or important item clues that must never be omitted.
+A list of entries marked with a pin icon. Every time the GM generates a response it gets the most recent pinned memories (the count is set in Settings → Memory), so they are not forgotten just because they are far back in the conversation, and they win over automatically extracted facts when they conflict. Use it for character settings, key agreements, or important item clues that must never be omitted.
 
 You can manually add and delete pinned memory entries.
 
@@ -27,7 +27,7 @@ Auto-extracted and written by the GM; manual editing is not supported. After eac
 
 ### Player Notes
 
-A free-form space for your own records. Notes are **not guaranteed to be read by the GM every turn** (unlike pinned memory, they are not force-injected), making them suitable for hypotheses, ideas, and conversation excerpts. You can freely add and delete note entries.
+A free-form space for your own records. The GM sees the most recent notes, and notes **win over automatically extracted facts** when they conflict; with many entries, the memory budget means not every note makes it into every turn. You can freely add and delete note entries.
 
 ### Last Turn Retrieval
 
@@ -47,7 +47,7 @@ Find the entry to delete → click the close button on its right side → confir
 
 ### Add a player note
 
-Click the + button to the right of the "Player Notes" heading → enter the content → confirm. Notes do not affect the GM's required-reading list; they are for your personal reference only.
+Click the + button to the right of the "Player Notes" heading → enter the content → confirm. The GM can see it from the next turn.
 
 ### Delete a player note
 
@@ -62,7 +62,7 @@ Check the "Last Turn Retrieval" block at the bottom of the panel. It contains ex
 ## FAQ
 
 **What is the difference between pinned memory and player notes?**
-Pinned memory is injected into the GM's context every turn (subject to a token budget — avoid piling in irrelevant content). Player notes are for your reference only; the GM is not guaranteed to read them every turn.
+Both are given to the GM, and both win over automatically extracted facts when they conflict. Pinned memory suits critical settings that must be remembered; player notes suit quick jottings. Both are subject to the per-turn count and token budget, so avoid piling in irrelevant content.
 
 **How many pinned memory entries should I add?**
 There is no hard limit, but each turn's injection has a token budget. When pinned memory is very large, lower-priority entries may be compressed under high-pressure turns. Keep only truly critical settings pinned; put the rest in player notes.

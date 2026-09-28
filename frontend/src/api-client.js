@@ -384,7 +384,6 @@
       avatarReset: () => POST(`${API_PREFIX}/profile/avatar/reset`, {}),
       // MediaStudio 图库：从已有资产 URL 设个人头像（不重新上传）
       setAvatarUrl: (url) => POST(`/api/profile/avatar-url`, { url }),
-      visibility: (body) => POST(`${API_PREFIX}/profile/visibility`, body),
       exportData: (body) => POST(`${API_PREFIX}/account/export`, body || {}),
       // 账号数据迁移(免部署 → 本地):聚合剧本/存档/角色卡/偏好为单个 zip
       migrateEstimate: () => GET(`${API_PREFIX}/me/account/export/estimate`),

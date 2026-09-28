@@ -15,11 +15,11 @@ Access: In-game right panel → Memory tab; or Platform Settings → Memory.
 
 Memory is organized into three buckets by type:
 
-- **Pinned bucket**: Facts you or the GM have manually pinned. Highest priority — always injected every turn. Use this for facts that must never be forgotten, such as "the protagonist has lost their left hand."
-- **World bucket**: Background tied to the world, locations, factions, and rules. The GM retrieves from this bucket by relevance — it is not fully injected every turn.
-- **Character bucket**: Relationships, NPC states, and character personalities. Also retrieved by relevance.
+- **Pinned bucket**: Facts you have pinned. Use this for facts that must never be forgotten, such as "the protagonist has lost their left hand."
+- **World bucket**: Main quest, current objective, facts extracted by the GM, and player notes.
+- **Character bucket**: Abilities and resources (items, currency, etc.).
 
-Each bucket can be toggled independently under Settings → Memory.
+Each turn the GM gets the most recent entries of each type (the count and overall cap are set in Settings → Memory). Each bucket can be toggled independently under Settings → Memory.
 
 ### Retrieval and Injection
 
@@ -52,7 +52,7 @@ Find the entry in the Pinned Memory list → click × on the right → confirm r
 
 ### Add a Player Note (In-Game)
 
-Right panel Memory tab → click + in the Player Notes section → enter the content. Notes are private reminders for you; the GM is not guaranteed to read them every turn (unlike pinned memory, which is force-injected).
+Right panel Memory tab → click + in the Player Notes section → enter the content. The GM sees the most recent notes, and notes win over automatically extracted facts when they conflict; with many entries, the memory budget means not every note makes it into every turn.
 
 ### See What the GM Referenced This Turn
 
@@ -60,20 +60,20 @@ The Recall section at the bottom of the Memory tab shows the fragments retrieved
 
 ### Adjust Memory Settings
 
-Platform Settings → Memory. You can tune retrieval depth, history summary window, per-turn injection token limit, auto-archive interval, and the enabled state of each bucket. Changes save automatically and take effect on the next GM call.
+Platform Settings → Memory. You can tune entries recalled per memory type, the archive check interval, the per-turn injection token limit, how many turns automatic facts are kept, the pinned memory limit, and the enabled state of each bucket. Changes save automatically and apply from the next turn.
 
 ---
 
 ## FAQ
 
 **What is the difference between pinned memory and player notes?**
-Pinned memory is injected into the GM's context every turn (subject to the token quota — do not overfill it). Player notes are private; the GM is not guaranteed to read them each turn.
+Both are given to the GM, and both take priority over automatically extracted facts when they conflict. Pinned memory suits critical settings that must be remembered; player notes suit quick jottings. Both are subject to the per-turn count and token budget, so don't overfill them.
 
 **What happens when the pinned memory bucket is full?**
-The bucket has a cap (20 entries by default, adjustable in settings). When the cap is exceeded, the oldest pinned memory is moved to the facts library; it is no longer force-injected but can still be recalled when relevant.
+Pinned memory has a count limit (20 by default, adjustable in settings). Once it is reached, the memory panel asks you to delete old entries before adding new ones; existing entries are never moved or deleted automatically.
 
 **The GM keeps forgetting something. What should I do?**
-Pin that fact in the in-game memory panel. Once in the pinned bucket it is injected every turn. If it is still being forgotten, check whether the per-turn injection token limit is set too low, causing content to be truncated.
+Pin that fact in the in-game memory panel, or write it as a player note. If it is still being forgotten, check whether the per-type recall count or the per-turn injection token limit is set too low, so the entry was left out that turn.
 
 **Will turning off a bucket delete its contents?**
 No. Disabling a bucket only stops retrieval and injection from that bucket; the data is retained and resumes normal operation when the bucket is re-enabled.

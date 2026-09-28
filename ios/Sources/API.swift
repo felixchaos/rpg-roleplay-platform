@@ -783,10 +783,6 @@ final class API {
         }
         _ = try await session.data(for: try request(base, "/api/profile", method: "POST", json: ["display_name": displayName, "bio": bio]))
     }
-    /// 公开个人主页开关(visibility 自由 jsonb,用 public_profile 键)。
-    func setProfileVisibility(base: String, isPublic: Bool) async throws {
-        _ = try await session.data(for: try request(base, "/api/profile/visibility", method: "POST", json: ["public_profile": isPublic]))
-    }
     /// 成就列表 GET /api/me/achievements → items[]。
     func achievements(base: String) async -> [[String: Any]] {
         guard let (data, resp) = try? await session.data(for: try request(base, "/api/me/achievements")),

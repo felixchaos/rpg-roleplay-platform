@@ -109,7 +109,7 @@ In the detail panel, click **Delete Key** and confirm. The provider is removed f
 2. The dialog probes the provider and shows a diff of local vs. remote models:
    - **New on remote**: models available remotely but not locally
    - **Local only**: models that exist locally but are no longer available remotely
-3. Click **Add All** to import new models at once. Select obsolete entries and click **Delete N** to clean them up.
+3. Regular users: the diff is against your own model list — click **Re-sync into my list** to bring in new remote models; select obsolete entries and click **Delete N** to remove models you added yourself (built-in catalog models can only be removed by admins). Admins: the diff is against the built-in platform catalog, and **Add All** writes new models into the catalog (visible to everyone).
 
 ---
 
@@ -132,7 +132,7 @@ Switch to the **Usage** tab in the detail panel to see request counts, input/out
 A: Click **Validate Connection** for detailed error output. Common causes: incorrect key, wrong Base URL (Google AI Studio requires `/v1beta/openai` at the end), or a missing HTTP proxy for connections to overseas services.
 
 **Q: A provider I disabled still shows models in the selector.**
-A: Confirm the toggle in the detail panel is off (grey). The provider toggle controls selector visibility across the entire app. To hide only specific models while keeping the provider active, use **Manage Visible Models**.
+A: Confirm the switch at the right end of that provider's row in the list is off (grey). The switch only disables your own key for that provider (it stops being used; turn it back on to resume) and does not affect other users. To hide only specific models while keeping the provider active, use **Manage Visible Models**.
 
 **Q: Can I configure multiple providers at the same time?**
 A: Yes. Different providers' models can be assigned to different game modules — see [Module Model Assignment](/en/settings-modules).
@@ -147,7 +147,7 @@ A: Register at openrouter.ai, obtain a key, select **OpenRouter** in the provide
 A: Click **Validate Connection** in the detail panel, or click the connectivity status column in the list.
 
 **Q: I hid a model, then re-synced and it came back.**
-A: Synced overlay models use per-user visibility — re-syncing does not reset your choices. If you added a model via **Validate Connection → Add All**, it defaults to visible; go to **Manage Visible Models** to hide it.
+A: Synced overlay models use per-user visibility — re-syncing does not reset your choices. If a model was added by re-syncing from **Validate Connection**, it defaults to visible; go to **Manage Visible Models** to hide it.
 
 **Q: Does changing Base URL affect other users?**
 A: No. Base URL and connection method (proxy) are stored in your personal credentials (per-user) and only affect API calls made under your account. The global catalog is not modified.

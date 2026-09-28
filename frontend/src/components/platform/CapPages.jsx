@@ -1,4 +1,4 @@
-// 插件 / MCP / Skill / API 能力页。纯机械从 platform-app.jsx 搬出,零行为变化。
+// 插件 / MCP / Skill / API 能力页。从 platform-app.jsx 搬出。
 import React from 'react';
 import { useState as useStatePL, useEffect as useEffectPL } from 'react';
 import { Icon } from '../../game-icons.jsx';
@@ -7,6 +7,7 @@ import {
   PromptModal, SettingsToggle,
 } from './shared.jsx';
 import { copyText } from '../../lib/clipboard.js';
+import { validateNewMcpServer, mcpLaunchable } from '../../lib/mcp-validate.js';
 import CSAlert from '@cloudscape-design/components/alert';
 import CSBox from '@cloudscape-design/components/box';
 import CSButton from '@cloudscape-design/components/button';
@@ -92,7 +93,8 @@ function CapPage({ kind }) {
           window.api.mcp.validate({ id: it.id, server_id: it.id }).catch(() => null)
         )
       );
-      const ok = results.filter(r => r && r.ok !== false).length;
+      // ok = 真能启动(ready_to_launch),不是「请求没报错」:命令在服务器上找不到也会回 200。
+      const ok = results.filter(mcpLaunchable).length;
       const fail = results.length - ok;
       window.__apiToast?.(`校验完成 · ${ok} ok / ${fail} fail`, { kind: fail ? "warn" : "ok", duration: 2400 });
     }
@@ -155,7 +157,7 @@ function CapPage({ kind }) {
             { key: "transport", label: "传输", type: "select", default: "stdio",
               options: [{ value: "stdio", label: "stdio · 本地命令" }, { value: "http", label: "http · 远程 HTTP" }] },
             { key: "command", label: "命令 / URL", required: true, mono: true,
-              placeholder: "stdio: uvx my-mcp\nhttp: https://host:port" },
+              placeholder: "stdio: npx @modelcontextprotocol/server-filesystem /data\nhttp: https://host:port" },
             { key: "env", label: "环境变量 / Headers", type: "textarea",
               placeholder: "每行一个：KEY=VALUE", rows: 3 },
           ] : kind === "skills" ? [
@@ -184,9 +186,10 @@ function CapPage({ kind }) {
               if (body.transport === "http") body.url = vals.command;
               else body.command = vals.command;
               if (Object.keys(envObj).length) body.env = envObj;
-              await window.api.mcp.upsert(body);
-              window.__apiToast?.("MCP 服务器已添加 · 正在校验", { kind: "ok", duration: 2000 });
-              try { await window.api.mcp.validate({ name: vals.name }); } catch (_) {}
+              const saved = await window.api.mcp.upsert(body);
+              // 校验只认 id:用 upsert 回的 server_id(以前发 {name},后端读 id → 校验从没跑过)。
+              const v = await validateNewMcpServer(window.api, saved?.server_id);
+              window.__apiToast?.(v.message, { kind: v.ok ? "ok" : "warn", duration: v.ok ? 2000 : 5000 });
             } else if (kind === "skills") {
               const repo = String(vals.repo_url || "").trim();
               const f = vals.file;

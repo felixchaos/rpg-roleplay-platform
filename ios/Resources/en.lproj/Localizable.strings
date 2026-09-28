@@ -593,3 +593,12 @@
 "将提交账号注销申请,宽限期内可登录撤销;到期后账号与全部数据将被永久删除。" = "This submits an account-deletion request. You can sign in to cancel during the grace period; after that, your account and all data are permanently deleted.";
 "注销申请已提交" = "Deletion requested";
 "好" = "OK";
+"检索与归档" = "Retrieval & archiving";
+"每类召回条数" = "Entries per memory type";
+"归档检查间隔" = "Archive check interval";
+"事实保留回合数" = "Keep facts for (turns)";
+"固定记忆条数上限" = "Pinned memory limit";
+"事实、笔记、能力、资源、固定记忆每一类各取最近若干条交给 GM,总量受 Token 预算约束。早于「事实保留回合数」的自动事实不再注入(不删除),笔记、固定记忆、能力、资源不受影响。" = "The GM gets the most recent entries of each memory type (facts, notes, abilities, resources, pinned), capped overall by the token budget. Automatic facts older than the keep-facts window are no longer injected (not deleted); notes, pinned memories, abilities and resources are unaffected.";
+"主线、目标、事实与笔记" = "Quest, objective, facts & notes";
+"能力与资源" = "Abilities & resources";
+"关闭某一桶后,每轮的记忆注入里不再包含这一类。" = "When a bucket is off, that type is no longer included in the per-turn memory injection.";

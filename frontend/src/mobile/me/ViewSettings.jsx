@@ -1,4 +1,4 @@
-/* MobileMe · VIEW 账户设置 Settings —— 从 pages/MobileMe.jsx 拆出,逐字节不变。 */
+/* MobileMe · VIEW 账户设置 Settings —— 从 pages/MobileMe.jsx 拆出。 */
 import React, { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Icon } from '../icons.jsx';
@@ -12,29 +12,24 @@ function ViewSettings({ nav, user }) {
   const { t } = useTranslation();
   const hasPassword = user.has_password !== false;
 
-  /* 偏好开关 */
+  /* 偏好开关:只保留后端真的会读的 public_profile(公开成就墙)。「允许被搜索」「二次验证」
+     「邮件通知」「匿名使用数据」「崩溃报告」和「资料字段可见性」全站没有后端读方,是装饰,已下线
+     (理由见 web components/platform/MeUserSettings.jsx,iOS 同批)。 */
   const [prefLoaded, setPrefLoaded] = useState(false);
-  const [twofa, setTwofa] = useState(null);
-  const [emailNotif, setEmailNotif] = useState(null);
   const [publicProfile, setPublicProfile] = useState(null);
-  const [searchable, setSearchable] = useState(null);
-  const [shareUsage, setShareUsage] = useState(null);
-  const [shareCrash, setShareCrash] = useState(null);
 
   /* 会话/历史 */
   const [sessions, setSessions] = useState([]);
   const [loginHistory, setLoginHistory] = useState([]);
 
   /* 子视图 */
-  const [subView, setSubView] = useState(null); // 'sessions'|'history'|'pw'|'personas'|'export'|'visibility'|'policy'|'delete-confirm'|'deact-confirm'
+  const [subView, setSubView] = useState(null); // 'sessions'|'history'|'pw'|'personas'|'export'|'policy'|'delete-confirm'|'deact-confirm'
 
   /* 表单状态 */
   const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '' });
   const [savingPw, setSavingPw] = useState(false);
   const [exportForm, setExportForm] = useState({ scope: 'all', format: 'zip', email: '' });
   const [exportBusy, setExportBusy] = useState(false);
-  const [visForm, setVisForm] = useState({ real_name: 'self', gender: 'friends', birthday: 'self', location: 'public', email: 'self', phone: 'self' });
-  const [visBusy, setVisBusy] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deactBusy, setDeactBusy] = useState(false);
@@ -49,18 +44,15 @@ function ViewSettings({ nav, user }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      // 读偏好走 GET(与 web 同一个 getPreferences)。以前这里调的是写接口 preferences() 不带参数
+      // (等于 POST 一个空补丁再拿返回值当读取)。
       try {
-        const r = await window.api.account.preferences();
+        const r = await window.api.account.getPreferences();
         if (cancelled) return;
-        const p = r?.preferences || r || {};
-        setTwofa(p.two_fa != null ? !!p.two_fa : true);
-        setEmailNotif(p.email_notif != null ? !!p.email_notif : true);
+        const p = r?.preferences || {};
         setPublicProfile(p.public_profile != null ? !!p.public_profile : false);
-        setSearchable(p.searchable != null ? !!p.searchable : true);
-        setShareUsage(p.share_usage != null ? !!p.share_usage : false);
-        setShareCrash(p.share_crash != null ? !!p.share_crash : true);
       } catch (_) {
-        if (!cancelled) { setTwofa(true); setEmailNotif(true); setPublicProfile(false); setSearchable(true); setShareUsage(false); setShareCrash(true); }
+        if (!cancelled) setPublicProfile(false);
       } finally { if (!cancelled) setPrefLoaded(true); }
     })();
     return () => { cancelled = true; };
@@ -115,12 +107,9 @@ function ViewSettings({ nav, user }) {
     try { await window.api.account.preferences({ [key]: val }); } catch (_) {}
   }, []);
 
-  useEffect(() => { if (twofa !== null && prefLoaded) savePref('two_fa', twofa); }, [twofa, prefLoaded]);
-  useEffect(() => { if (emailNotif !== null && prefLoaded) savePref('email_notif', emailNotif); }, [emailNotif, prefLoaded]);
-  useEffect(() => { if (publicProfile !== null && prefLoaded) savePref('public_profile', publicProfile); }, [publicProfile, prefLoaded]);
-  useEffect(() => { if (searchable !== null && prefLoaded) savePref('searchable', searchable); }, [searchable, prefLoaded]);
-  useEffect(() => { if (shareUsage !== null && prefLoaded) savePref('share_usage', shareUsage); }, [shareUsage, prefLoaded]);
-  useEffect(() => { if (shareCrash !== null && prefLoaded) savePref('share_crash', shareCrash); }, [shareCrash, prefLoaded]);
+  // 只在用户真的拨动开关时写(与 web 同口径)。以前用「值变即写」的 effect:进页加载完就把读到的值
+  // 原样回写一遍,读取失败时更是把默认值 false 写回去,把用户已开的公开主页悄悄关掉。
+  const onTogglePublicProfile = (v) => { setPublicProfile(v); savePref('public_profile', v); };
 
   const nSess = sessions.length;
   const curSess = sessions.find(s => s.current) || sessions[0];
@@ -178,16 +167,6 @@ function ViewSettings({ nav, user }) {
       setSubView(null);
     } catch (e) { nav.toast(t('mobile.me.settings.export_failed'), 'danger', 'warn'); }
     finally { setExportBusy(false); }
-  };
-
-  const onSaveVisibility = async () => {
-    setVisBusy(true);
-    try {
-      await window.api.account.visibility(visForm);
-      nav.toast(t('mobile.me.settings.visibility_saved'), 'ok', 'check');
-      setSubView(null);
-    } catch (e) { nav.toast(t('mobile.me.edit.save_error', { msg: '' }), 'danger', 'warn'); }
-    finally { setVisBusy(false); }
   };
 
   const onDeleteAccount = async () => {
@@ -390,29 +369,6 @@ function ViewSettings({ nav, user }) {
     </>
   );
 
-  if (subView === 'visibility') return (
-    <>
-      <PageHead title={t('mobile.me.settings.visibility_title')} onBack={() => setSubView(null)} />
-      <div className="pl-body tabbed">
-        <div className="pl-pad">
-          <div className="pl-sec" style={{ paddingTop: 8 }}>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 16, lineHeight: 1.6 }}>{t('mobile.me.settings.visibility_desc')}</div>
-            {[{ k: 'real_name', l: t('mobile.me.edit.field_real_name') }, { k: 'gender', l: t('mobile.me.edit.field_gender') }, { k: 'birthday', l: t('mobile.me.edit.field_birthday') }, { k: 'location', l: t('mobile.me.edit.field_location') }, { k: 'email', l: t('mobile.me.edit.field_email') }, { k: 'phone', l: t('mobile.me.edit.field_phone') }].map(({ k, l }) => (
-              <Select key={k} label={l} value={visForm[k] || 'self'} onChange={v => setVisForm(f => ({ ...f, [k]: v }))}
-                options={[{ value: 'self', label: t('mobile.me.settings.vis_self') }, { value: 'friends', label: t('mobile.me.settings.vis_friends') }, { value: 'public', label: t('mobile.me.settings.vis_public') }]} />
-            ))}
-          </div>
-          <div style={{ display: 'flex', gap: 10, paddingTop: 8 }}>
-            <button onClick={() => setSubView(null)} style={{ flex: 1, height: 46, borderRadius: 12, fontSize: 14, background: 'var(--panel-2)', border: '1px solid var(--line)', color: 'var(--text-quiet)' }}>{t('common.cancel')}</button>
-            <button onClick={onSaveVisibility} disabled={visBusy} style={{ flex: 2, height: 46, borderRadius: 12, fontSize: 14, fontWeight: 600, background: 'var(--accent)', border: 'none', color: '#fff8f3', opacity: visBusy ? 0.7 : 1 }}>
-              {visBusy ? t('mobile.me.edit.saving') : t('mobile.me.settings.visibility_save_btn')}
-            </button>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-
   if (subView === 'policy') return (
     <>
       <PageHead title={t('mobile.me.settings.policy_title')} onBack={() => setSubView(null)} />
@@ -443,13 +399,7 @@ function ViewSettings({ nav, user }) {
           <div className="pl-sec">
             <div className="pl-sec-head"><h2>{t('mobile.me.settings.privacy_section')}</h2></div>
             <SetRow label={t('mobile.me.settings.public_profile')} desc={t('mobile.me.settings.public_profile_desc')}>
-              <Toggle on={!!publicProfile} onChange={v => setPublicProfile(v)} disabled={!prefLoaded} />
-            </SetRow>
-            <SetRow label={t('mobile.me.settings.searchable')} desc={t('mobile.me.settings.searchable_desc')}>
-              <Toggle on={!!searchable} onChange={v => setSearchable(v)} disabled={!prefLoaded} />
-            </SetRow>
-            <SetRow label={t('mobile.me.settings.field_visibility')} desc={t('mobile.me.settings.field_visibility_desc')}>
-              <ActionBtn label={t('mobile.me.settings.field_visibility_btn')} icon="sliders" onClick={() => setSubView('visibility')} />
+              <Toggle on={!!publicProfile} onChange={onTogglePublicProfile} disabled={!prefLoaded} />
             </SetRow>
           </div>
 
@@ -458,9 +408,6 @@ function ViewSettings({ nav, user }) {
             <div className="pl-sec-head"><h2>{t('mobile.me.settings.security_section')}</h2></div>
             <SetRow label={hasPassword ? t('mobile.me.settings.change_password') : t('mobile.me.settings.set_password')} desc={hasPassword ? t('mobile.me.settings.pw_desc_change') : t('mobile.me.settings.pw_desc_set')}>
               <ActionBtn label={hasPassword ? t('mobile.me.settings.change_password') : t('mobile.me.settings.set_password')} icon="lock" onClick={() => setSubView('pw')} />
-            </SetRow>
-            <SetRow label={t('mobile.me.settings.twofa')} desc={t('mobile.me.settings.twofa_desc')}>
-              <Toggle on={!!twofa} onChange={v => setTwofa(v)} disabled={!prefLoaded} />
             </SetRow>
             <SetRow label={t('mobile.me.settings.active_sessions')} desc={sessDesc}>
               <ActionBtn label={t('mobile.me.settings.view_sessions')} icon="eye" onClick={() => setSubView('sessions')} />
@@ -478,23 +425,9 @@ function ViewSettings({ nav, user }) {
             </SetRow>
           </div>
 
-          {/* 通知 */}
-          <div className="pl-sec">
-            <div className="pl-sec-head"><h2>{t('mobile.me.settings.notifications_section')}</h2></div>
-            <SetRow label={t('mobile.me.settings.email_notif')} desc={t('mobile.me.settings.email_notif_desc')}>
-              <Toggle on={!!emailNotif} onChange={v => setEmailNotif(v)} disabled={!prefLoaded} />
-            </SetRow>
-          </div>
-
           {/* 数据共享 */}
           <div className="pl-sec">
             <div className="pl-sec-head"><h2>{t('mobile.me.settings.data_sharing_section')}</h2></div>
-            <SetRow label={t('mobile.me.settings.anon_usage')} desc={t('mobile.me.settings.anon_usage_desc')}>
-              <Toggle on={!!shareUsage} onChange={v => setShareUsage(v)} disabled={!prefLoaded} />
-            </SetRow>
-            <SetRow label={t('mobile.me.settings.crash_report')} desc={t('mobile.me.settings.crash_report_desc')}>
-              <Toggle on={!!shareCrash} onChange={v => setShareCrash(v)} disabled={!prefLoaded} />
-            </SetRow>
             <SetRow label="GDPR / Privacy Policy">
               <ActionBtn label={t('mobile.me.settings.view_policy')} icon="file" onClick={() => setSubView('policy')} />
             </SetRow>

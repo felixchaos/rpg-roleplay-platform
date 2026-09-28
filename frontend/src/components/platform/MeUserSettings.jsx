@@ -22,13 +22,13 @@ function MeUserSettings() {
   const save = useAutoSave(t('platform.me.settings.label', '用户设置'), null);
   const tog = (setter, field) => (v) => { setter(v); save(field, v); };
   // 初始值为 null，等后端拉取完成后再用真实值初始化，防止 mount 时以硬编码默认值覆盖已存设置
-  const [twofa, setTwofa] = useStatePL(null);
-  const [emailNotif, setEmailNotif] = useStatePL(null);
+  // 只保留后端真的会读的开关:public_profile(公开成就墙,api/me/achievements.py 读)。
+  // 以前还有「允许搜索」「匿名用量统计」「崩溃 / 错误报告」「个性化推荐」「二次验证(2FA)」
+  // 「邮件通知」六个开关和「资料字段可见性」逐项配置,全站没有任何后端代码读这些键:没有用户
+  // 搜索、没有用量上报、错误信息只在用户提交反馈时随包附带、没有推荐、没有 2FA 实现(开着还显示
+  // 「Authenticator」,等于谎报账号有二次验证)、没有按偏好发的邮件、资料字段可见性写进
+  // profile_extras.visibility 后无人读取。装饰性开关已下线(手机端 / iOS 同批)。
   const [publicProfile, setPublicProfile] = useStatePL(null);
-  const [searchable, setSearchable] = useStatePL(null);
-  const [shareUsage, setShareUsage] = useStatePL(null);
-  const [shareCrash, setShareCrash] = useStatePL(null);
-  const [adsTrack, setAdsTrack] = useStatePL(null);
   const [prefLoaded, setPrefLoaded] = useStatePL(false);
 
   // mount 时先从后端拉真实偏好值，再初始化各开关
@@ -39,26 +39,10 @@ function MeUserSettings() {
         const r = await window.api.account.getPreferences();
         if (cancelled) return;
         const p = r?.preferences || r || {};
-        if (p.two_fa != null) setTwofa(!!p.two_fa);
-        else setTwofa(true);
-        if (p.email_notif != null) setEmailNotif(!!p.email_notif);
-        else setEmailNotif(true);
-        if (p.public_profile != null) setPublicProfile(!!p.public_profile);
-        else setPublicProfile(false);
-        if (p.searchable != null) setSearchable(!!p.searchable);
-        else setSearchable(true);
-        if (p.share_usage != null) setShareUsage(!!p.share_usage);
-        else setShareUsage(false);
-        if (p.share_crash != null) setShareCrash(!!p.share_crash);
-        else setShareCrash(true);
-        if (p.ads_track != null) setAdsTrack(!!p.ads_track);
-        else setAdsTrack(false);
+        setPublicProfile(p.public_profile != null ? !!p.public_profile : false);
       } catch (_) {
         // 拉取失败：使用安全默认值
-        if (!cancelled) {
-          setTwofa(true); setEmailNotif(true); setPublicProfile(false);
-          setSearchable(true); setShareUsage(false); setShareCrash(true); setAdsTrack(false);
-        }
+        if (!cancelled) setPublicProfile(false);
       } finally {
         if (!cancelled) setPrefLoaded(true);
       }
@@ -74,14 +58,12 @@ function MeUserSettings() {
   const [sessionsOpen, setSessionsOpen] = useStatePL(false);
   const [historyOpen, setHistoryOpen] = useStatePL(false);
   const [exportOpen, setExportOpen] = useStatePL(false);
-  const [visibilityOpen, setVisibilityOpen] = useStatePL(false);
   const [policyOpen, setPolicyOpen] = useStatePL(false);
 
   // task 49：sessions 初始值原是硬编码假行 [{device:"macOS·Chrome 134", ip:"127.0.0.1"}]，
   // 即使后端返回空也永远显示这条假记录。改为空数组 + mount 即拉真后端。
   const [sessions, setSessions] = useStatePL([]);
   const [loginHistory, setLoginHistory] = useStatePL([]);
-  const [visibilitySettings, setVisibilitySettings] = useStatePL({});
   const [savesCount, setSavesCount] = useStatePL(null);
 
   // mount 即拉 sessions/login-history/saves count，供描述行使用真实数字
@@ -170,17 +152,6 @@ function MeUserSettings() {
     }
   };
 
-  const onSaveVisibility = async (vals) => {
-    try {
-      await window.api.account.visibility(vals || {});
-      setVisibilitySettings(vals || {});
-      window.__apiToast?.(t('platform.me.settings.visibility_saved', '已保存可见性'), { kind: "ok" });
-      setVisibilityOpen(false);
-    } catch (e) {
-      window.__apiToast?.(t('platform.me.settings.save_failed', '保存失败'), { kind: "danger", detail: e?.message });
-    }
-  };
-
   const onDeactivate = async () => {
     setBusyDeact(true);
     try {
@@ -223,37 +194,12 @@ function MeUserSettings() {
             desc={t('platform.me.settings.public_profile_desc', '开启后，其他用户可以通过 @用户名 查看你的成就墙和最近活动。')}
             control={<SettingsToggle on={publicProfile} set={tog(setPublicProfile, "public_profile")} />}
           />
-          <SettingRow
-            title={t('platform.me.settings.searchable', '允许搜索')}
-            desc={t('platform.me.settings.searchable_desc', '允许通过显示名或用户名在平台内搜索找到你。')}
-            control={<SettingsToggle on={searchable} set={tog(setSearchable, "searchable")} />}
-          />
-          <SettingRow
-            title={t('platform.me.settings.visibility', '资料字段可见性')}
-            desc={t('platform.me.settings.visibility_desc', '逐项控制谁能看到你的真实姓名、所在地、生日等。')}
-            control={<CSButton onClick={() => setVisibilityOpen(true)}>{t('platform.me.settings.visibility_btn', '逐项配置')}</CSButton>}
-          />
         </CSSpaceBetween>
       </CSContainer>
 
       {/* 数据共享 · 合规 */}
       <CSContainer header={<CSHeader variant="h2">{t('platform.me.settings.section_data', '数据共享 · 合规')}</CSHeader>}>
         <CSSpaceBetween size="l">
-          <SettingRow
-            title={t('platform.me.settings.share_usage', '匿名用量统计')}
-            desc={t('platform.me.settings.share_usage_desc', '把按钮点击 / 页面停留时长（不含剧本内容）匿名上报给团队，用于改进体验。')}
-            control={<SettingsToggle on={shareUsage} set={tog(setShareUsage, "share_usage")} />}
-          />
-          <SettingRow
-            title={t('platform.me.settings.share_crash', '崩溃 / 错误报告')}
-            desc={t('platform.me.settings.share_crash_desc', '出现错误时上传堆栈信息和最近一次操作。剧本内容不会被上传。')}
-            control={<SettingsToggle on={shareCrash} set={tog(setShareCrash, "share_crash")} />}
-          />
-          <SettingRow
-            title={t('platform.me.settings.personalized', '个性化推荐')}
-            desc={t('platform.me.settings.personalized_desc', '基于你的剧本与角色卡向你推荐 Skill 和 MCP。')}
-            control={<SettingsToggle on={adsTrack} set={tog(setAdsTrack, "ads_track")} />}
-          />
           <SettingRow
             title={t('platform.me.settings.gdpr', 'GDPR / 个人信息保护合规')}
             desc={t('platform.me.settings.gdpr_desc', '本平台不向第三方分享你的剧本内容、玩家变量或私聊。详见隐私政策。')}
@@ -269,16 +215,6 @@ function MeUserSettings() {
             title={hasPassword ? t('platform.me.settings.change_password', '修改密码') : t('platform.me.settings.set_password', '设置密码')}
             desc={hasPassword ? t('platform.me.settings.change_password_desc', '建议每 90 天更换一次，至少 12 位字符 + 大小写 + 数字。') : t('platform.me.settings.set_password_desc', '当前账号通过邮箱链接登录，尚未设置密码；可直接设置一组新密码。')}
             control={<CSButton iconName="lock-private" onClick={() => setPwOpen(true)}>{hasPassword ? t('platform.me.settings.change_password', '修改密码') : t('platform.me.settings.set_password', '设置密码')}</CSButton>}
-          />
-          <SettingRow
-            title={t('platform.me.settings.two_fa', '二次验证（2FA）')}
-            desc={t('platform.me.settings.two_fa_desc', '通过 Authenticator App 或手机短信进行二次验证。')}
-            control={
-              <CSSpaceBetween direction="horizontal" size="xs">
-                {twofa && <span className="pill ok"><span className="dot ok" /> Authenticator</span>}
-                <SettingsToggle on={twofa} set={tog(setTwofa, "two_fa")} />
-              </CSSpaceBetween>
-            }
           />
           {(() => {
             const nSess = sessions.length;
@@ -309,15 +245,6 @@ function MeUserSettings() {
             </>;
           })()}
         </CSSpaceBetween>
-      </CSContainer>
-
-      {/* 通知 */}
-      <CSContainer header={<CSHeader variant="h2">{t('platform.me.settings.section_notif', '通知')}</CSHeader>}>
-        <SettingRow
-          title={t('platform.me.settings.email_notif', '邮件通知')}
-          desc={t('platform.me.settings.email_notif_desc', '重要安全事件、订阅变更、长时间未登录提醒。')}
-          control={<SettingsToggle on={emailNotif} set={tog(setEmailNotif, "email_notif")} />}
-        />
       </CSContainer>
 
       {/* 数据所有权 */}
@@ -370,29 +297,6 @@ function MeUserSettings() {
         submitLabel={hasPassword ? t('platform.me.settings.change_password', '修改密码') : t('platform.me.settings.set_password', '设置密码')}
         onClose={() => setPwOpen(false)}
         onConfirm={onChangePassword}
-      />
-      <PromptModal
-        open={visibilityOpen}
-        eyebrow={t('platform.me.settings.visibility', '资料字段可见性')}
-        title={t('platform.me.settings.visibility_title', '逐项控制谁能看到')}
-        hint="POST /api/profile/visibility · 仅影响他人查看"
-        fields={[
-          { key: "real_name", label: t('platform.me.edit.field_real_name', '真实姓名'), type: "select", default: "self",
-            options: [{value: "self", label: t('platform.me.settings.vis_self','仅自己')}, {value: "friends", label: t('platform.me.settings.vis_friends','好友')}, {value: "public", label: t('platform.me.settings.vis_public','所有人')}] },
-          { key: "gender", label: t('platform.me.edit.field_gender', '性别'), type: "select", default: "friends",
-            options: [{value: "self", label: t('platform.me.settings.vis_self','仅自己')}, {value: "friends", label: t('platform.me.settings.vis_friends','好友')}, {value: "public", label: t('platform.me.settings.vis_public','所有人')}] },
-          { key: "birthday", label: t('platform.me.edit.field_birthday', '生日'), type: "select", default: "self",
-            options: [{value: "self", label: t('platform.me.settings.vis_self','仅自己')}, {value: "friends", label: t('platform.me.settings.vis_friends','好友')}, {value: "public", label: t('platform.me.settings.vis_public','所有人')}] },
-          { key: "location", label: t('platform.me.edit.field_location', '所在地'), type: "select", default: "public",
-            options: [{value: "self", label: t('platform.me.settings.vis_self','仅自己')}, {value: "friends", label: t('platform.me.settings.vis_friends','好友')}, {value: "public", label: t('platform.me.settings.vis_public','所有人')}] },
-          { key: "email", label: t('platform.me.edit.field_email', '邮箱'), type: "select", default: "self",
-            options: [{value: "self", label: t('platform.me.settings.vis_self','仅自己')}, {value: "friends", label: t('platform.me.settings.vis_friends','好友')}, {value: "public", label: t('platform.me.settings.vis_public','所有人')}] },
-          { key: "phone", label: t('platform.me.edit.field_phone', '手机'), type: "select", default: "self",
-            options: [{value: "self", label: t('platform.me.settings.vis_self','仅自己')}, {value: "friends", label: t('platform.me.settings.vis_friends','好友')}, {value: "public", label: t('platform.me.settings.vis_public','所有人')}] },
-        ]}
-        submitLabel={t('platform.me.settings.visibility_save', '保存可见性')}
-        onClose={() => setVisibilityOpen(false)}
-        onConfirm={onSaveVisibility}
       />
       <PromptModal
         open={exportOpen}

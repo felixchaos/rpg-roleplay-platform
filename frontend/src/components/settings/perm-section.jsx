@@ -1,30 +1,22 @@
-// 权限设置区(PermSection + AuditLogView + 高风险白名单常量)。纯机械搬出,零行为变化。
+// 权限设置区(PermSection + AuditLogView)。
 import React from 'react';
 import { useState as useStatePL, useEffect as useEffectPL } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAutoSave } from '../../platform-app.jsx';
-import { lsGetJSON, lsSetJSON } from '../../lib/storage.js';
 import { SetGroup, SetRow, SetSelect } from './shared.jsx';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
-import CSInput from '@cloudscape-design/components/input';
 import CSButton from '@cloudscape-design/components/button';
 import CSAlert from '@cloudscape-design/components/alert';
 
-const _HIGH_RISK_DEFAULTS = ["timeline.pending_jump", "player.background", "world.constraints"];
-const _HIGH_RISK_ALL = ["timeline.pending_jump", "player.background", "world.constraints", "relationships.*.tone"];
-
-// B1: 自定义白名单输入校验 regex
-const _CUSTOM_WL_RE = /^[a-zA-Z_][a-zA-Z0-9_.*]*$/;
-
+// 这里只保留后端真的会读的设置:默认权限模式(新建存档时注入 state.permissions.mode,见
+// rpg/platform_app/workspace/snapshot.py)。以前还有「高风险白名单」和「自定义高风险白名单」两项,
+// 存进偏好后没有任何后端代码读:写入闸(state/path_ops._write_path_allowed)在完全访问模式下
+// 一律放行,根本没有「按字段在完全访问下仍弹确认」的机制,内置的几个路径也不是真实状态路径
+// (如 world.constraints)。开关点了什么都不变,是装饰,已下线(手机端 / iOS 同批)。
 function PermSection() {
   const { t } = useTranslation();
   // task 52：从 user_preferences 拉真实值，改动 patch /api/me/preference
   const [defaultMode, setDefaultMode] = useStatePL("review");
-  const [highRiskWhitelist, setHighRiskWhitelist] = useStatePL(_HIGH_RISK_DEFAULTS);
-  // B1: 自定义白名单
-  const [customWhitelist, setCustomWhitelist] = useStatePL([]);
-  const [customInput, setCustomInput] = useStatePL("");
-  const [customInputError, setCustomInputError] = useStatePL("");
   const save = useAutoSave(t('settings.nav.permissions'), "perm");
 
   useEffectPL(() => {
@@ -36,57 +28,10 @@ function PermSection() {
         const p = (r && r.preferences) || {};
         const v = p["perm.default_mode"] || p.default_perm_mode;
         if (v) setDefaultMode(v);
-        const wl = p["perm.high_risk_whitelist"];
-        if (Array.isArray(wl)) setHighRiskWhitelist(wl);
-        // B1: 读自定义白名单
-        const cwl = p["permissions.custom_whitelist"];
-        if (Array.isArray(cwl)) setCustomWhitelist(cwl);
-        else {
-          // localStorage 兜底
-          const stored = lsGetJSON("perm.custom_whitelist", null);
-          if (stored) setCustomWhitelist(stored);
-        }
       } catch (_) {}
     })();
     return () => { cancelled = true; };
   }, []);
-
-  const toggleWhitelist = (field) => {
-    const next = highRiskWhitelist.includes(field)
-      ? highRiskWhitelist.filter(f => f !== field)
-      : [...highRiskWhitelist, field];
-    setHighRiskWhitelist(next);
-    save("high_risk_whitelist", next);
-  };
-
-  // B1: 保存自定义白名单（尝试后端，兜底 localStorage）
-  const saveCustomWhitelist = async (next) => {
-    setCustomWhitelist(next);
-    try {
-      await window.api.account.preferences({ "permissions.custom_whitelist": next });
-    } catch (_) {
-      // 后端不支持则 localStorage 兜底
-    }
-    lsSetJSON("perm.custom_whitelist", next);
-  };
-
-  const addCustomEntry = () => {
-    const val = customInput.trim();
-    if (!val) { setCustomInputError(t('settings.permissions.err_empty')); return; }
-    if (val.length > 80) { setCustomInputError(t('settings.permissions.err_too_long')); return; }
-    if (!_CUSTOM_WL_RE.test(val)) { setCustomInputError(t('settings.permissions.err_invalid')); return; }
-    if (_HIGH_RISK_ALL.includes(val)) { setCustomInputError(t('settings.permissions.err_in_builtin')); return; }
-    if (customWhitelist.includes(val)) { setCustomInputError(t('settings.permissions.err_duplicate')); return; }
-    const next = [...customWhitelist, val];
-    saveCustomWhitelist(next);
-    setCustomInput("");
-    setCustomInputError("");
-  };
-
-  const removeCustomEntry = (entry) => {
-    const next = customWhitelist.filter(e => e !== entry);
-    saveCustomWhitelist(next);
-  };
 
   return (
     <SetGroup title={t('settings.permissions.title')}>
@@ -100,63 +45,6 @@ function PermSection() {
           ]}
           onChange={(val) => { setDefaultMode(val); save("default_mode", val); }}
         />
-      </SetRow>
-      <SetRow label={t('settings.permissions.high_risk')} description={t('settings.permissions.high_risk_desc')}>
-        <CSSpaceBetween direction="horizontal" size="xs">
-          {_HIGH_RISK_ALL.map(field => (
-            <CSButton
-              key={field}
-              variant={highRiskWhitelist.includes(field) ? "primary" : "normal"}
-              onClick={() => toggleWhitelist(field)}
-            >{field}</CSButton>
-          ))}
-        </CSSpaceBetween>
-      </SetRow>
-
-      {/* B1: 自定义高风险白名单 */}
-      <SetRow label={t('settings.permissions.custom_whitelist')} description={t('settings.permissions.custom_whitelist_desc')}>
-        <CSSpaceBetween size="s">
-          <div style={{display: "flex", gap: 8, alignItems: "flex-start"}}>
-            <div style={{flex: 1}}>
-              <CSInput
-                value={customInput}
-                placeholder={t('settings.permissions.custom_placeholder')}
-                onChange={({ detail }) => { setCustomInput(detail.value); if (customInputError) setCustomInputError(""); }}
-                onKeyDown={(e) => { if (e.detail?.key === "Enter" || e.key === "Enter") addCustomEntry(); }}
-                invalid={!!customInputError}
-              />
-              {customInputError && (
-                <div style={{color: "var(--danger, #c8675d)", fontSize: 12, marginTop: 4}}>{customInputError}</div>
-              )}
-            </div>
-            <CSButton variant="primary" onClick={addCustomEntry}>{t('settings.permissions.add_entry')}</CSButton>
-          </div>
-          {customWhitelist.length > 0 && (
-            <div style={{display: "flex", flexWrap: "wrap", gap: 6}}>
-              {customWhitelist.map(entry => (
-                <div key={entry} style={{
-                  display: "inline-flex", alignItems: "center", gap: 6,
-                  padding: "3px 8px", borderRadius: 4,
-                  background: "var(--bg-deep, #f0f0f2)", border: "1px solid var(--line-soft, #ddd)",
-                  fontSize: 13, fontFamily: "ui-monospace, monospace",
-                }}>
-                  <span>{entry}</span>
-                  <button
-                    onClick={() => removeCustomEntry(entry)}
-                    style={{
-                      border: "none", background: "none", cursor: "pointer",
-                      color: "var(--danger, #c8675d)", fontSize: 14, padding: "0 2px", lineHeight: 1,
-                    }}
-                    title={t('common.delete')}
-                  >×</button>
-                </div>
-              ))}
-            </div>
-          )}
-          {customWhitelist.length === 0 && (
-            <span className="muted" style={{fontSize: 12}}>{t('settings.permissions.no_entries')}</span>
-          )}
-        </CSSpaceBetween>
       </SetRow>
 
       <AuditLogView />
