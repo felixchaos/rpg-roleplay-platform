@@ -283,8 +283,15 @@ function guessKind(name) {
 window.__normalizeScript = function (s) { return normalizeScript(s); };
 window.__normalizeSave = function (s) { return normalizeSave(s); };
 
+// 后端字段整行透传,再覆盖展示用的派生字段(标题兜底、相对时间等)。以前是白名单:只留 id/title/…/owner_id,
+// 其余字段全塞进 _raw —— 读顶层字段的消费方全部静默拿到 undefined,同一个根因先后坑了:
+// owner_id(作者改不了自己的剧本)、review_status(已复核的剧本点发布仍恒提示先去复核)、
+// sharing_mode / current_pin_*(引用状态和「解除引用」永远不显示)、readiness(列表「状态」列恒为「—」,
+// 未就绪剧本的开局拦截形同虚设)、cover_image_url / head_commit_id / forked_from_script_id。
+// 新字段不必再到这里登记;要改展示口径的字段才在下面覆盖。原始行仍放在 _raw(updated_at 等被覆盖的原值从这里取)。
 function normalizeScript(s) {
   return {
+    ...s,
     id: s.id,
     uid: s.uid || ("scr_" + (s.id || "")),
     title: s.title || s.name || "未命名剧本",
@@ -295,9 +302,6 @@ function normalizeScript(s) {
     updated_at: fmtAgo(s.updated_at) || s.updated_at_human || "—",
     is_public: !!s.is_public,
     clone_count: s.clone_count || 0,
-    // owner 判定字段必须透传(原来只在 _raw 里 → ScriptDetailPanel 的 s.owner_id===currentUserId
-    // 恒 undefined===id → isOwner 恒 false,作者改不了自己剧本的叙事风格/分享模式)。
-    owner_id: s.owner_id,
     is_subscribed: !!s.is_subscribed,
     _raw: s,
   };
@@ -513,4 +517,4 @@ queueMicrotask(() => {
   else window.addEventListener("api-ready", bootstrap, { once: true });
 });
 
-export {};
+export { normalizeScript };

@@ -15,10 +15,13 @@ export function isReferenceMode(mode) {
 }
 
 // 引用状态(只在真的引用了另一个剧本时返回对象,否则 null)。
+// 旧选择器曾把 target_script_id 写成剧本自己,线上可能留着「引用自己」的行:KB 读取重定向指回自己,
+// 等于没引用 —— 不当引用展示,免得出现「本剧本读取剧本 #自己」这种误导文案。
 export function referenceInfo(script) {
   if (!script || !isReferenceMode(script.sharing_mode)) return null;
   const target = script.current_pin_script_id;
   if (target == null || target === '') return null;
+  if (script.id != null && String(target) === String(script.id)) return null;
   const commit = script.current_pin_commit_id;
   return {
     mode: script.sharing_mode,
