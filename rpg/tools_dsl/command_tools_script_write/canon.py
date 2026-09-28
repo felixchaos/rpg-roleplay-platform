@@ -2,8 +2,8 @@
 
 canon 实体:list(读级闸)+ 按 logical_key upsert。
 aliases = jsonb 字符串数组、attrs = jsonb 开放对象;编辑写入标 source='editor'(重建保留)。
-类型白名单 / 新建时 logical_key 的生成规则与 REST(POST /canon-entities)共用
-kb.canon_repo 的同一套(normalize_canon_type / allocate_canon_logical_key)。
+类型白名单 / 新建时 logical_key 的生成与校验规则 / 同名同类型查重 / 改文本置空向量 /
+别名缓存作废,与 REST(/canon-entities)共用 kb.canon_repo、kb.alias 的同一套。
 """
 from __future__ import annotations
 
@@ -47,7 +47,18 @@ def _t_upsert_canon_entity(user_id: int, script_id: int | None, args: dict, stat
         return "失败: script_id 必填"
     logical_key = (args.get("logical_key") or "")
     logical_key = str(logical_key).strip()
-    from kb.canon_repo import allocate_canon_logical_key, canon_type_choices_text, normalize_canon_type
+    from kb.alias import invalidate_alias_cache
+    from kb.canon_repo import (
+        allocate_canon_logical_key,
+        canon_embedding_reset_sql,
+        canon_logical_key_problem,
+        canon_type_choices_text,
+        find_same_name_canon,
+        normalize_canon_type,
+    )
+    key_problem = canon_logical_key_problem(logical_key)
+    if key_problem:
+        return f"失败: {key_problem}"
     # type:给了就必须认得出(与 REST 同一白名单,中文/近义写法归一);认不出直接失败,不落脏类型。
     entity_type = None
     if args.get("type") is not None and str(args.get("type")).strip():
@@ -109,6 +120,18 @@ def _t_upsert_canon_entity(user_id: int, script_id: int | None, args: dict, stat
                 # 有真实字段更新但没动 attrs → 仍标 source='editor',让重建保留这条用户编辑过的实体(harness 审计 P1)。
                 if not any(s.startswith("attrs") for s in sets):
                     sets.append("attrs = coalesce(attrs,'{}'::jsonb) || '{\"source\":\"editor\"}'::jsonb")
+                # 名字 / 别名 / 摘要真改了 → 向量置空等重嵌(与 REST PUT 同口径)。
+                text_values = {}
+                if args.get("name") is not None:
+                    text_values["name"] = str(args["name"])
+                if args.get("summary") is not None:
+                    text_values["summary"] = str(args["summary"])
+                if "aliases" in args and isinstance(args["aliases"], list):
+                    text_values["aliases"] = _strlist(args["aliases"])
+                reset = canon_embedding_reset_sql(text_values)
+                if reset:
+                    sets.append(reset[0])
+                    params.extend(reset[1])
                 params.extend([sid, logical_key])
                 db.execute(
                     f"update kb_canon_entities set {', '.join(sets)} "
@@ -125,12 +148,17 @@ def _t_upsert_canon_entity(user_id: int, script_id: int | None, args: dict, stat
                 except Exception:
                     pass
                 db.commit()
+                invalidate_alias_cache(sid)
                 return f"已更新 canon 实体「{logical_key}」(剧本 #{sid})"
             else:
                 # ── 创建 ── name/type 是 NOT NULL,创建时必须给。
                 name = str(args.get("name") or "").strip()
                 if not name or not entity_type:
                     return "失败: 创建 canon 实体必须提供 name 和 type"
+                dup = find_same_name_canon(db, sid, name, entity_type)
+                if dup:
+                    return (f"失败: 剧本 #{sid} 已有同名同类型实体「{dup['name']}」"
+                            f"(logical_key={dup['logical_key']});要改它请带这个 logical_key 更新,不要重复新建")
                 aliases = args.get("aliases")
                 attrs = args.get("attrs")
                 explicit_key = bool(logical_key)
@@ -180,6 +208,7 @@ def _t_upsert_canon_entity(user_id: int, script_id: int | None, args: dict, stat
                 except Exception:
                     pass
                 db.commit()
+                invalidate_alias_cache(sid)
                 return f"已创建 canon 实体「{logical_key}」(剧本 #{sid})"
     except ValueError as exc:
         return f"失败: {exc}"

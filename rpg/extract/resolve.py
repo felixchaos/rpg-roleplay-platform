@@ -64,7 +64,10 @@ class CanonEntity:
 
 def _slug(name: str) -> str:
     s = re.sub(r"\s+", "_", _to_simplified(name).strip())
-    return re.sub(r"[^\w一-鿿·.-]", "", s)[:80] or "entity"
+    s = re.sub(r"[^\w一-鿿·.-]", "", s)[:80]
+    # 只剩点号(「.」「..」)的 key 进了 /canon-entities/{key} 路径会被浏览器当目录规范化掉,
+    # 这条实体从此打不开也删不掉 → 与空名一样退回 entity。
+    return s if s.strip(".") else "entity"
 
 
 # ── gloss 聚合:择优+充实(治『战姬 11 字』——旧版 first-gloss-wins 跨千章从不充实) ─────
@@ -628,6 +631,9 @@ def resolve_and_write(db, script_id: int, chapter_extracts: list, *, embedder=No
             background=c.background,
         )
         written += 1
+    # 名字 / 别名可能变了:本进程的别名归并缓存作废(其它 worker 靠缓存 TTL 自愈,见 kb.alias)。
+    from kb.alias import invalidate_alias_cache
+    invalidate_alias_cache(script_id)
 
     # v28: 同步 character 类 canon → character_cards 表(NPC 角色卡)
     character_canon = [c for c in canon if c.type == "character"]

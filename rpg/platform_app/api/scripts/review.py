@@ -84,6 +84,9 @@ async def api_patch_canon(request: Request, script_id: int, user=Depends(require
       {"op": "update_entity", "logical_key": "...", "summary": "...", "aliases": [...], "importance": N}
       {"op": "merge_entity", "from_key": "...", "into_key": "..."}  # from 的别名并入 into,删 from
       {"op": "delete_entity", "logical_key": "..."}
+
+    与编辑器 REST(script_edit/canon.py)同口径:摘要 / 别名真改了 → 向量置空;删除 / 合并掉的
+    实体,挂在它下面的子实体改成无上级 / 改挂到合并目标;写完作废别名归并缓存。
     """
     try:
         body = await request.json()
@@ -92,68 +95,89 @@ async def api_patch_canon(request: Request, script_id: int, user=Depends(require
     with connect() as db:
         if not _owned_script(db, script_id, user["id"]):
             return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
-        op = (body.get("op") or "").strip()
-        if op == "update_entity":
-            lk = (body.get("logical_key") or "").strip()
-            if not lk:
-                return json_response({"ok": False, "error": "缺 logical_key"}, status_code=400)
-            from psycopg.types.json import Jsonb
-            sets, args = [], []
-            for col in ("summary",):
-                if col in body:
-                    sets.append(f"{col}=%s")
-                    args.append("" if body[col] is None else str(body[col]))
-            if "importance" in body:
-                try:
-                    imp = int(body["importance"] or 0)
-                except (TypeError, ValueError):
-                    return json_response({"ok": False, "error": "「重要度」要填整数"}, status_code=400)
-                sets.append("importance=%s")
-                args.append(imp)
-            if "aliases" in body and isinstance(body["aliases"], list):
-                sets.append("aliases=%s")
-                args.append(Jsonb(body["aliases"]))
-            if not sets:
-                return json_response({"ok": False, "error": "无可更新字段"}, status_code=400)
-            # 人工复核改过 → 标 source='editor',重建知识库保留(与编辑器 REST / agent 工具同口径)
-            sets.append("attrs = coalesce(attrs, '{}'::jsonb) || %s::jsonb")
-            args.append(Jsonb({"source": "editor"}))
-            args.extend([script_id, lk])
-            n = db.execute(
-                f"update kb_canon_entities set {', '.join(sets)} where script_id=%s and logical_key=%s",
-                tuple(args),
-            ).rowcount
-            return json_response({"ok": True, "updated": n})
-        if op == "merge_entity":
-            frm = (body.get("from_key") or "").strip()
-            into = (body.get("into_key") or "").strip()
-            if not frm or not into:
-                return json_response({"ok": False, "error": "缺 from_key/into_key"}, status_code=400)
-            src = db.execute("select name, aliases from kb_canon_entities where script_id=%s and logical_key=%s", (script_id, frm)).fetchone()
-            if not src:
-                return json_response({"ok": False, "error": f"from_key 不存在: {frm}"}, status_code=404)
-            dst = db.execute("select 1 from kb_canon_entities where script_id=%s and logical_key=%s", (script_id, into)).fetchone()
-            if not dst:
-                return json_response({"ok": False, "error": f"into_key 不存在: {into}"}, status_code=400)
-            from psycopg.types.json import Jsonb
-            merged_aliases = list({*(src.get("aliases") or []), src["name"]})
-            updated = db.execute(
-                "update kb_canon_entities set aliases = (select to_jsonb(array(select distinct e from unnest("
-                "  array(select jsonb_array_elements_text(coalesce(aliases,'[]'::jsonb))) || %s::text[]) e))) "
-                "where script_id=%s and logical_key=%s",
-                (merged_aliases, script_id, into),
-            ).rowcount
-            if updated == 0:
-                return json_response({"ok": False, "error": "into_key 更新失败,未执行 DELETE"}, status_code=500)
-            db.execute("delete from kb_canon_entities where script_id=%s and logical_key=%s", (script_id, frm))
-            return json_response({"ok": True, "merged": True})
-        if op == "delete_entity":
-            lk = (body.get("logical_key") or "").strip()
-            if not lk:
-                return json_response({"ok": False, "error": "缺 logical_key"}, status_code=400)
-            n = db.execute("delete from kb_canon_entities where script_id=%s and logical_key=%s", (script_id, lk)).rowcount
-            return json_response({"ok": True, "deleted": n})
-        return json_response({"ok": False, "error": f"未知 op: {op}"}, status_code=400)
+        resp = _apply_canon_patch(db, script_id, body)
+    # 事务提交后再作废:提交前作废,并发请求可能把旧值又读进缓存。
+    from kb.alias import invalidate_alias_cache
+    invalidate_alias_cache(script_id)
+    return resp
+
+
+def _apply_canon_patch(db, script_id: int, body: dict):
+    from psycopg.types.json import Jsonb
+
+    from kb.canon_repo import canon_embedding_reset_sql, detach_canon_children
+    op = (body.get("op") or "").strip()
+    if op == "update_entity":
+        lk = (body.get("logical_key") or "").strip()
+        if not lk:
+            return json_response({"ok": False, "error": "缺 logical_key"}, status_code=400)
+        sets, args = [], []
+        text_values: dict = {}
+        for col in ("summary",):
+            if col in body:
+                val = "" if body[col] is None else str(body[col])
+                sets.append(f"{col}=%s")
+                args.append(val)
+                text_values[col] = val
+        if "importance" in body:
+            try:
+                imp = int(body["importance"] or 0)
+            except (TypeError, ValueError):
+                return json_response({"ok": False, "error": "「重要度」要填整数"}, status_code=400)
+            sets.append("importance=%s")
+            args.append(imp)
+        if "aliases" in body and isinstance(body["aliases"], list):
+            sets.append("aliases=%s")
+            args.append(Jsonb(body["aliases"]))
+            text_values["aliases"] = body["aliases"]
+        if not sets:
+            return json_response({"ok": False, "error": "无可更新字段"}, status_code=400)
+        # 人工复核改过 → 标 source='editor',重建知识库保留(与编辑器 REST / agent 工具同口径)
+        sets.append("attrs = coalesce(attrs, '{}'::jsonb) || %s::jsonb")
+        args.append(Jsonb({"source": "editor"}))
+        reset = canon_embedding_reset_sql(text_values)
+        if reset:
+            sets.append(reset[0])
+            args.extend(reset[1])
+        args.extend([script_id, lk])
+        n = db.execute(
+            f"update kb_canon_entities set {', '.join(sets)} where script_id=%s and logical_key=%s",
+            tuple(args),
+        ).rowcount
+        return json_response({"ok": True, "updated": n})
+    if op == "merge_entity":
+        frm = (body.get("from_key") or "").strip()
+        into = (body.get("into_key") or "").strip()
+        if not frm or not into:
+            return json_response({"ok": False, "error": "缺 from_key/into_key"}, status_code=400)
+        src = db.execute("select name, aliases from kb_canon_entities where script_id=%s and logical_key=%s", (script_id, frm)).fetchone()
+        if not src:
+            return json_response({"ok": False, "error": f"from_key 不存在: {frm}"}, status_code=404)
+        dst = db.execute("select 1 from kb_canon_entities where script_id=%s and logical_key=%s", (script_id, into)).fetchone()
+        if not dst:
+            return json_response({"ok": False, "error": f"into_key 不存在: {into}"}, status_code=400)
+        merged_aliases = list({*(src.get("aliases") or []), src["name"]})
+        # 别名并进来了 → 合并目标的嵌入文本变了,向量置空等重嵌。
+        updated = db.execute(
+            "update kb_canon_entities set aliases = (select to_jsonb(array(select distinct e from unnest("
+            "  array(select jsonb_array_elements_text(coalesce(aliases,'[]'::jsonb))) || %s::text[]) e))), "
+            "  embedding = null "
+            "where script_id=%s and logical_key=%s",
+            (merged_aliases, script_id, into),
+        ).rowcount
+        if updated == 0:
+            return json_response({"ok": False, "error": "into_key 更新失败,未执行 DELETE"}, status_code=500)
+        db.execute("delete from kb_canon_entities where script_id=%s and logical_key=%s", (script_id, frm))
+        moved = detach_canon_children(db, script_id, frm, new_parent=into)
+        return json_response({"ok": True, "merged": True, "moved_children": moved})
+    if op == "delete_entity":
+        lk = (body.get("logical_key") or "").strip()
+        if not lk:
+            return json_response({"ok": False, "error": "缺 logical_key"}, status_code=400)
+        n = db.execute("delete from kb_canon_entities where script_id=%s and logical_key=%s", (script_id, lk)).rowcount
+        detached = detach_canon_children(db, script_id, lk) if n else []
+        return json_response({"ok": True, "deleted": n, "detached_children": detached})
+    return json_response({"ok": False, "error": f"未知 op: {op}"}, status_code=400)
 
 
 @router.post("/api/scripts/{script_id}/mark-reviewed")

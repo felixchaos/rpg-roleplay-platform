@@ -46,10 +46,22 @@ def upsert_canon_entity(db, script_id: int, logical_key: str, *, name: str, type
                         first_revealed_chapter: int = 0, public_knowledge: bool = False,
                         importance: int = 0, metadata: dict | None = None,
                         full_name: str = "", identity: str = "", background: str = "",
-                        entity_subtype: str = "", parent_logical_key: str = "") -> dict:
+                        entity_subtype: str = "", parent_logical_key: str = "") -> dict | None:
+    """主提取链路(extract.resolve)写规范实体。
+
+    编辑器写入的实体(attrs.source='editor',REST / 编辑器 agent / 复核页打的标记)一律不动,
+    与同链路的锚点(script_timeline_anchors.source)、世界书(metadata.source)保护同口径:
+      · 同 key 撞上编辑器行 → do update 的 where 不成立,整行保持用户的值(返回 None);
+      · 编辑器行的 key 不同但同名同类型(旧规则建的「奉天城_location」vs 提取的「奉天城」)
+        → 不另插一条影子实体(返回 None),否则 GM 读到两份。
+    名字 / 别名 / 摘要(参与嵌入的文本)真的变了 → 向量置空,等下一轮嵌入按新文本重算
+    (embed_canon_entities 只补 embedding is null 的行)。
+    """
     # v34: full_name / identity / background 进规范层 KB,GM 服务可从同一处取
     # v43: entity_subtype + parent_logical_key 解决"德军/铁人团/无忧宫"全平级 faction 问题
     # 空串语义=不覆盖旧值(case when 保留已有);只在 LLM 抽到非空时更新。
+    if find_same_name_canon(db, script_id, name, type, exclude_key=logical_key, editor_only=True):
+        return None
     return db.execute(
         """
         insert into kb_canon_entities(script_id, logical_key, name, aliases, type, summary, attrs,
@@ -69,7 +81,12 @@ def upsert_canon_entity(db, script_id: int, logical_key: str, *, name: str, type
           entity_subtype = case when length(excluded.entity_subtype) > 0
                                 then excluded.entity_subtype else kb_canon_entities.entity_subtype end,
           parent_logical_key = case when length(excluded.parent_logical_key) > 0
-                                    then excluded.parent_logical_key else kb_canon_entities.parent_logical_key end
+                                    then excluded.parent_logical_key else kb_canon_entities.parent_logical_key end,
+          embedding = case when kb_canon_entities.name is distinct from excluded.name
+                             or kb_canon_entities.aliases is distinct from excluded.aliases
+                             or kb_canon_entities.summary is distinct from excluded.summary
+                           then null else kb_canon_entities.embedding end
+        where coalesce(kb_canon_entities.attrs->>'source', '') <> 'editor'
         returning *
         """,
         (script_id, logical_key, name, Jsonb(aliases or []), type, summary, Jsonb(attrs or {}),
@@ -77,6 +94,73 @@ def upsert_canon_entity(db, script_id: int, logical_key: str, *, name: str, type
          full_name or "", identity or "", background or "",
          entity_subtype or "", parent_logical_key or ""),
     ).fetchone()
+
+
+def find_same_name_canon(db, script_id: int, name: str, entity_type: str, *,
+                         exclude_key: str | None = None, editor_only: bool = False) -> dict | None:
+    """本剧本里同名(忽略大小写)同类型的已有实体;没有返回 None。
+
+    编辑器新建前用它拦重复(REST 回 409 / agent 工具返回失败并指向那条);
+    主提取写入前用它(editor_only=True)避免给编辑器实体造一条同名影子。
+    """
+    nm = str(name or "").strip()
+    if not nm or not entity_type:
+        return None
+    sql = ("select logical_key, name, type from kb_canon_entities "
+           "where script_id = %s and type = %s and lower(name) = lower(%s)")
+    args: list = [script_id, entity_type, nm]
+    if exclude_key is not None:
+        sql += " and logical_key <> %s"
+        args.append(exclude_key)
+    if editor_only:
+        sql += " and coalesce(attrs->>'source', '') = 'editor'"
+    sql += " order by id limit 1"
+    return db.execute(sql, tuple(args)).fetchone()
+
+
+# ── 编辑器写侧:嵌入文本变更 / 子实体引用 ─────────────────────────────────────
+# 参与嵌入的文本列(extract.embed.embed_canon_entities 拼的是 name + aliases + summary)。
+CANON_EMBED_TEXT_COLS: tuple[str, ...] = ("name", "aliases", "summary")
+
+
+def canon_embedding_reset_sql(new_values: dict) -> tuple[str, list] | None:
+    """UPDATE kb_canon_entities 的 SET 片段:本次要写的嵌入文本列只要有一列的值真变了,
+    就把 embedding 置空(与世界书 PUT 置空 embedding_vec 同口径)。值没变(md-editor 整体回写)
+    保留向量,不白白重嵌。new_values 里没有嵌入文本列 → None(调用方什么都不加)。
+
+    UPDATE 的 SET 表达式读的是更新前的行,所以这个片段放在 SET 列表的任何位置都成立。
+    """
+    conds: list[str] = []
+    params: list = []
+    for col in CANON_EMBED_TEXT_COLS:
+        if col not in new_values:
+            continue
+        if col == "aliases":
+            conds.append("aliases is distinct from %s::jsonb")
+            params.append(Jsonb(list(new_values[col] or [])))
+        else:
+            conds.append(f"{col} is distinct from %s")
+            params.append(new_values[col])
+    if not conds:
+        return None
+    return f"embedding = case when {' or '.join(conds)} then null else embedding end", params
+
+
+def detach_canon_children(db, script_id: int, logical_key: str, *, new_parent: str = "") -> list[str]:
+    """把 parent_logical_key 指向 logical_key 的子实体改挂到 new_parent(默认空串=无上级)。
+
+    删除实体时不处理子实体,上级列会挂着一个不存在的 key,之后同名重建分到同一个 key 时
+    旧子实体又被静默挂回去。合并(merge)时传 new_parent=合并目标,子实体跟着过去
+    (合并目标自己原来就挂在被删实体下的,改成无上级,不自指)。返回受影响的子实体 key(排序)。
+    """
+    rows = db.execute(
+        "update kb_canon_entities set parent_logical_key = "
+        "case when logical_key = %s then '' else %s end "
+        "where script_id = %s and parent_logical_key = %s and logical_key <> %s "
+        "returning logical_key",
+        (new_parent, new_parent, script_id, logical_key, logical_key),
+    ).fetchall()
+    return sorted(str(r["logical_key"]) for r in rows)
 
 
 # ── 编辑器写侧:类型白名单 + logical_key 分配 ────────────────────────────────
@@ -116,15 +200,31 @@ def canon_type_choices_text() -> str:
 
 
 def canon_logical_key_base(name: str, entity_type: str) -> str:
-    """新建实体的 logical_key 基底 —— 与提取链路同口径,不另起一套规则。
+    """新建实体的 logical_key 基底 —— 与主提取链路(extract.resolve)同口径。
 
-    名字规范化复用 extract.resolve._slug(简繁/全角归一、空白转下划线、去非法字符);
-    非 character 类型加「_<type>」后缀(extract.rebuild 重建 canon 同规则,
-    resolve 的 concept 也是「<slug>_concept」)。纯函数:同名同类型恒得同一基底。
+    名字规范化复用 extract.resolve._slug(简繁/全角归一、空白转下划线、去非法字符、
+    只剩点号时退回 entity);只有 concept 加「_concept」后缀,其它类型直接用规范化名字
+    (resolve 写人物 / 势力 / 地点 / 物品都是 _slug(名字),写概念是「<slug>_concept」)。
+    同口径才撞得上:用户手建的「奉天城」和之后提取出的「奉天城」是同一个 key,提取按编辑器
+    保护跳过,不会多出一条。纯函数:同名同类型恒得同一基底。
     """
     from extract.resolve import _slug  # 懒 import:extract.resolve 顶层 import 本模块
     base = _slug(name)
-    return base if entity_type == "character" else f"{base}_{entity_type}"
+    return f"{base}_concept" if entity_type == "concept" else base
+
+
+def canon_logical_key_problem(key: str) -> str | None:
+    """显式传入的 logical_key 不能用时返回给用户看的原因,能用返回 None。
+
+    key 会出现在 /canon-entities/{key} 路径里:斜杠会拆路径;只由点号组成的「.」「..」
+    会被浏览器当成当前 / 上一级目录规范化掉,请求落到别的地址,这条实体就打不开、改不了、删不掉。
+    """
+    k = str(key or "")
+    if "/" in k:
+        return "logical_key 里不能有斜杠「/」"
+    if k and not k.strip("."):
+        return "logical_key 不能只由点号组成(「.」「..」在网址里会被当成目录,这条实体会打不开)"
+    return None
 
 
 def allocate_canon_logical_key(db, script_id: int, name: str, entity_type: str) -> str:

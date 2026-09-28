@@ -4,7 +4,8 @@
 新建设定实体只发 {name, type},POST /canon-entities 却要求调用方必须给 logical_key,
 从 f3e3fc58a(2026-06)起新建必失败。这里锁死整条编辑面:
 
-  · 新建不带 logical_key → 后端按「提取重建同口径」确定性生成,稳定且唯一(同名同类再建加序号)
+  · 新建不带 logical_key → 后端按「主提取同口径」确定性生成,稳定且唯一(基底被别的实体占了加序号;
+    同名同类型再建 → 409 指向已有那条,见 test_canon_editor_integrity)
   · 显式给 logical_key 撞键 → 仍 409(旧语义留给显式传 key 的调用方)
   · name / type 校验 + 可读报错(不再只列字段名)
   · PUT 真能改名 / 改类型(之前静默丢弃 name/type,md-editor 改名、表格改名都是假成功)
@@ -85,15 +86,22 @@ def test_create_without_logical_key_generates_stable_unique_key(env):
     assert j1["ok"] is True
     lk1 = j1["entity"]["logical_key"]
     assert j1["logical_key"] == lk1
-    # 与提取重建同口径:非 character 类型带 _<type> 后缀
+    # 与主提取(extract.resolve)同口径:只有 concept 带 _concept 后缀
     assert lk1 == "新实体_concept"
 
-    # 同名同类型再建:不冲突,确定性加序号
+    # 同名同类型再建:不静默造重复,409 指向已有那条
     r2 = c.post(f"/api/scripts/{sid}/canon-entities", json={"name": "新实体", "type": "concept"})
-    assert r2.status_code == 200, r2.text
-    assert r2.json()["entity"]["logical_key"] == "新实体_concept_2"
-    r3 = c.post(f"/api/scripts/{sid}/canon-entities", json={"name": "新实体", "type": "concept"})
-    assert r3.json()["entity"]["logical_key"] == "新实体_concept_3"
+    assert r2.status_code == 409, r2.text
+    assert r2.json()["existing_logical_key"] == "新实体_concept"
+
+    # 同名不同类型:基底被占 → 确定性加序号
+    r2 = c.post(f"/api/scripts/{sid}/canon-entities", json={"name": "北海", "type": "character"})
+    assert r2.json()["entity"]["logical_key"] == "北海"
+    r3 = c.post(f"/api/scripts/{sid}/canon-entities", json={"name": "北海", "type": "location"})
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["entity"]["logical_key"] == "北海_2"
+    r3 = c.post(f"/api/scripts/{sid}/canon-entities", json={"name": "北海", "type": "item"})
+    assert r3.json()["entity"]["logical_key"] == "北海_3"
 
     # character 类型:key 就是规范化名字(空白转下划线),与 resolve._slug 一致
     r4 = c.post(f"/api/scripts/{sid}/canon-entities", json={"name": " 穆蕾 莉娅 ", "type": "character"})
@@ -110,7 +118,7 @@ def test_create_accepts_chinese_type_synonym(env):
     r = c.post(f"/api/scripts/{sid}/canon-entities", json={"name": "北港", "type": "地点"})
     assert r.status_code == 200, r.text
     assert r.json()["entity"]["type"] == "location"
-    assert r.json()["entity"]["logical_key"] == "北港_location"
+    assert r.json()["entity"]["logical_key"] == "北港"
 
 
 def test_create_explicit_key_conflict_still_409(env):
@@ -274,8 +282,9 @@ def test_editor_agent_tool_creates_without_key_and_validates_type(env):
     assert "灵脉_concept" in out
     assert _row(env, "灵脉_concept")["attrs"].get("source") == "editor"
 
+    # 同名同类型再建:失败并指向已有 key(不静默造 灵脉_concept_2)
     out = _t_upsert_canon_entity(uid, sid, {"name": "灵脉", "type": "concept"}, None)
-    assert "灵脉_concept_2" in out
+    assert out.startswith("失败") and "灵脉_concept" in out and "灵脉_concept_2" not in out
 
     out = _t_upsert_canon_entity(uid, sid, {"name": "某物", "type": "weapon"}, None)
     assert out.startswith("失败") and "weapon" in out

@@ -4,12 +4,16 @@
 类型白名单与 logical_key 生成规则住 kb.canon_repo(与编辑器 agent 工具共用)。
 
 契约(md-editor 资源管理器 / 剧本详情「知识库人物」表格 / 编辑器 agent 共用):
-  · 新建:name、type 必填;logical_key 可省,省略时后端按提取链路同口径生成
-    (character → 规范化名字;其它 → 规范化名字_<type>;被占用则 _2/_3…),返回体带实际 key。
-    显式给 logical_key 且已被占用 → 409(旧语义不变)。
+  · 新建:name、type 必填;logical_key 可省,省略时后端按主提取链路同口径生成
+    (concept → 规范化名字_concept;其它 → 规范化名字;被占用则 _2/_3…),返回体带实际 key。
+    显式给 logical_key 且已被占用 → 409(旧语义不变);只由点号组成 / 带斜杠 → 400。
+    本剧本已有同名同类型实体 → 409 并指向那条(与 NPC 卡 create_only 同语义,不静默造重复)。
   · 编辑:只改 body 里出现的字段;name/type 可改(key 是固定标识,不随改名变)。
-  · 删除:物理删除,commit 里留删除前整行供审计(与世界书/锚点删除同语义)。
-  · 编辑器写入一律打 attrs.source='editor',重建知识库时保留(与 agent 工具同口径)。
+    名字 / 别名 / 摘要真改了 → 向量置空等重嵌(与世界书 PUT 同口径)。
+  · 删除:物理删除,commit 里留删除前整行供审计(与世界书/锚点删除同语义);
+    挂在它下面的子实体改成无上级,受影响的 key 记进 commit(detached_children)。
+  · 编辑器写入一律打 attrs.source='editor',重建知识库 / 重新提取时保留(与 agent 工具同口径)。
+  · 写完作废本进程的别名归并缓存(kb.alias)。
 """
 from __future__ import annotations
 
@@ -18,9 +22,15 @@ from typing import Any
 from fastapi import Depends, Request
 from psycopg.types.json import Jsonb
 
+from kb.alias import invalidate_alias_cache
 from kb.canon_repo import (
+    CANON_TYPE_LABELS_ZH,
     allocate_canon_logical_key,
+    canon_embedding_reset_sql,
+    canon_logical_key_problem,
     canon_type_choices_text,
+    detach_canon_children,
+    find_same_name_canon,
     normalize_canon_type,
 )
 
@@ -40,6 +50,10 @@ _TEXT_FIELDS = ("full_name", "summary", "identity", "background", "entity_subtyp
 _INT_FIELDS = {"importance": "重要度", "first_revealed_chapter": "首次出现章节"}
 _EDITOR_SOURCE = {"source": "editor"}
 _NOT_FOUND = "这个设定实体不存在(可能已被删除),刷新列表后再试"
+
+
+def _type_label(entity_type: str) -> str:
+    return CANON_TYPE_LABELS_ZH.get(entity_type, entity_type)
 
 
 class _CanonInputError(ValueError):
@@ -178,6 +192,11 @@ async def api_canon_update(
         else:
             sets.append("attrs = coalesce(attrs, '{}'::jsonb) || %s::jsonb")
             args.append(Jsonb(_EDITOR_SOURCE))
+        # 名字 / 别名 / 摘要真改了 → 向量置空(否则召回一直按旧文本命中,embed 只补 null 行)。
+        reset = canon_embedding_reset_sql(fields)
+        if reset:
+            sets.append(reset[0])
+            args.extend(reset[1])
 
         args.extend([script_id, logical_key])
         db.execute(
@@ -200,6 +219,7 @@ async def api_canon_update(
             payload={"table": "kb_canon_entities", "op": "edit", "before": before, "after": after, "ids": {"logical_key": logical_key}},
         )
         db.commit()
+    invalidate_alias_cache(script_id)
 
     return json_response({"ok": True, "entity": after, "commit_id": commit_id})
 
@@ -223,8 +243,9 @@ async def api_canon_add(
     except _CanonInputError as exc:
         return value_error_response(exc)
     explicit_key = str(body.get("logical_key") or "").strip()
-    if "/" in explicit_key:
-        return json_response({"ok": False, "error": "logical_key 里不能有斜杠「/」"}, status_code=400)
+    key_problem = canon_logical_key_problem(explicit_key)
+    if key_problem:
+        return json_response({"ok": False, "error": key_problem}, status_code=400)
     if explicit_key and fields.get("parent_logical_key") == explicit_key:
         return json_response({"ok": False, "error": "不能把实体自己设为上级"}, status_code=400)
 
@@ -233,6 +254,15 @@ async def api_canon_add(
             _require_owner(db, script_id, user["id"])
         except ValueError as exc:
             return value_error_response(exc, status_code=403)
+
+        dup = find_same_name_canon(db, script_id, fields["name"], fields["type"])
+        if dup:
+            return json_response({
+                "ok": False,
+                "error": (f"本剧本已经有同名的{_type_label(fields['type'])}「{dup['name']}」"
+                          f"(logical_key: {dup['logical_key']}),请直接编辑那一条,不要重复新建"),
+                "existing_logical_key": dup["logical_key"],
+            }, status_code=409)
 
         new_row = None
         # 自动生成的 key:并发新建可能选到同一个号 → 撞了就重选(最多 5 次)。显式 key 只试一次。
@@ -287,6 +317,7 @@ async def api_canon_add(
             payload={"table": "kb_canon_entities", "op": "add", "after": after, "ids": {"logical_key": logical_key}},
         )
         db.commit()
+    invalidate_alias_cache(script_id)
 
     return json_response({"ok": True, "entity": after, "logical_key": logical_key, "commit_id": commit_id})
 
@@ -320,6 +351,9 @@ async def api_canon_delete(
             "DELETE FROM kb_canon_entities WHERE script_id=%s AND logical_key=%s",
             (script_id, logical_key),
         )
+        # 子实体的上级指向被删的 key:改成无上级(否则上级列挂着不存在的 key,
+        # 之后同名重建分到同一个 key 时旧子实体又被静默挂回去)。
+        detached = detach_canon_children(db, script_id, logical_key)
 
         commit_id = _write_commit(
             db,
@@ -327,8 +361,10 @@ async def api_canon_delete(
             user_id=user["id"],
             kind="canon_delete",
             message=f"删除 canon entity: {logical_key}",
-            payload={"table": "kb_canon_entities", "op": "delete", "before": before, "ids": {"logical_key": logical_key}},
+            payload={"table": "kb_canon_entities", "op": "delete", "before": before,
+                     "detached_children": detached, "ids": {"logical_key": logical_key}},
         )
         db.commit()
+    invalidate_alias_cache(script_id)
 
-    return json_response({"ok": True, "deleted": True, "commit_id": commit_id})
+    return json_response({"ok": True, "deleted": True, "detached_children": detached, "commit_id": commit_id})

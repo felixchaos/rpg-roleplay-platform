@@ -203,9 +203,14 @@ def rebuild_canon_resolve_from_facts(db, script_id: int) -> dict:
             "and coalesce(attrs->>'source','') <> 'editor'",
             (script_id,),
         )
+        from kb.canon_repo import find_same_name_canon
         written = 0
         for typ, mentions in by_type.items():
             for name, rec in mentions.items():
+                # 幸存的 editor 实体 key 规则可能和这里(名字_类型)不同(编辑器 / 主提取对地点势力
+                # 用裸名字):同名同类型已有编辑器实体就不再插一条影子,否则 GM 读到两份。
+                if find_same_name_canon(db, script_id, name, typ, editor_only=True):
+                    continue
                 try:
                     db.execute(
                         """
@@ -234,6 +239,8 @@ def rebuild_canon_resolve_from_facts(db, script_id: int) -> dict:
                         "name": name, "type": typ, "error": str(exc),
                     })
         db.execute("RELEASE SAVEPOINT canon_rebuild")
+        from kb.alias import invalidate_alias_cache
+        invalidate_alias_cache(script_id)  # 实体整批重建:别名归并缓存作废
     except Exception as exc:
         db.execute("ROLLBACK TO SAVEPOINT canon_rebuild")
         return {
