@@ -64,8 +64,10 @@ check_postgres() {
 
 # Postgres 进程在 ≠ 业务库已建好。check_postgres 只看端口在听。
 # 后端取连接串的顺序是 DATABASE_URL → POSTGRES_URL → RPG_DATABASE_URL → 默认库
-# (platform_app/db/connection.py),每个键可以来自 rpg/.env、仓库根 .env 或 shell 环境变量
-# (app.py 两个 .env 都加载,rpg/.env 最后加载、优先)。这里按同样的顺序找:
+# (platform_app/db/connection.py),每个键可以来自 rpg/.env、仓库根 .env 或 shell 环境变量。
+# app.py 先以 override=False 加载仓库根 .env(shell 里已有的键不覆盖),再以 override=True
+# 加载 rpg/.env(什么都盖),所以同一个键:rpg/.env > shell 环境变量 > 仓库根 .env;
+# 写了但值为空也算设了(python-dotenv 照样写进环境),会遮住后面的来源。这里按同样的规则找:
 #   · 配了但连不上 → 后端会在 psycopg 重试里挂 300s,提前拦下并给出指引;
 #   · 哪里都没配   → 后端用默认库,这里只提示、不拦(不跑 setup.sh、直接用默认库的开发机很常见)。
 DEFAULT_DATABASE_URL="postgresql:///rpg_platform"
@@ -78,22 +80,44 @@ _dotenv_get() {
     | sed -e 's/^["'\'']//' -e 's/["'\'']$//'
 }
 
-# 连接串里的密码不回显到终端。
-_redact_url() {
-  printf '%s' "$1" | sed -E 's#(://[^:/@]*):[^@]*@#\1:***@#'
+# .env 里有没有这个键(「KEY=」行,值可以为空;只写 KEY 不带等号的行 python-dotenv 不写进环境)。
+_dotenv_has() {
+  [ -f "$1" ] || return 1
+  grep -qE "^[[:space:]]*(export[[:space:]]+)?$2=" "$1" 2>/dev/null
 }
 
-# 结果写进 DB_SRC / DB_KEY / DB_URL;哪里都没配时返回 1。
+# 连接串里的密码不回显到终端。三种写法都遮:
+#   · URL 的 user:pass@host —— 按最后一个 @ 切,密码里带 @ 也不漏;
+#   · URL 查询参数 ?password=... / &password=...;
+#   · libpq 的 key=value 串 password=... / password = '...'(sslpassword 同理)。
+_redact_url() {
+  printf '%s' "$1" | sed -E \
+    -e 's#(://[^:/@]*):.*@#\1:***@#' \
+    -e "s#(^|[[:space:]?&])(([Ss][Ss][Ll])?[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])[[:space:]]*=[[:space:]]*('([^'\\\\]|\\\\.)*'|[^[:space:]&]*)#\\1\\2=***#g"
+}
+
+# 后端实际看到的某个键(规则见上):结果写进 EFF_SRC / EFF_VAL;三处都没有时返回 1。
+_effective_env() {
+  EFF_SRC=""; EFF_VAL=""
+  if _dotenv_has "$RPG_DIR/.env" "$1"; then
+    EFF_SRC="rpg/.env"; EFF_VAL="$(_dotenv_get "$RPG_DIR/.env" "$1")"; return 0
+  fi
+  if printenv "$1" >/dev/null 2>&1; then
+    EFF_SRC="环境变量"; EFF_VAL="$(printenv "$1")"; return 0
+  fi
+  if _dotenv_has "$ROOT/.env" "$1"; then
+    EFF_SRC="仓库根 .env"; EFF_VAL="$(_dotenv_get "$ROOT/.env" "$1")"; return 0
+  fi
+  return 1
+}
+
+# 结果写进 DB_SRC / DB_KEY / DB_URL;哪里都没配(或都是空值)时返回 1。
 _resolve_db_url() {
   DB_SRC=""; DB_KEY=""; DB_URL=""
-  local key val
+  local key
   for key in DATABASE_URL POSTGRES_URL RPG_DATABASE_URL; do
-    val="$(_dotenv_get "$RPG_DIR/.env" "$key")"
-    if [ -n "$val" ]; then DB_SRC="rpg/.env"; DB_KEY="$key"; DB_URL="$val"; return 0; fi
-    val="$(_dotenv_get "$ROOT/.env" "$key")"
-    if [ -n "$val" ]; then DB_SRC="仓库根 .env"; DB_KEY="$key"; DB_URL="$val"; return 0; fi
-    val="$(printenv "$key" 2>/dev/null || true)"
-    if [ -n "$val" ]; then DB_SRC="环境变量"; DB_KEY="$key"; DB_URL="$val"; return 0; fi
+    _effective_env "$key" || continue
+    if [ -n "$EFF_VAL" ]; then DB_SRC="$EFF_SRC"; DB_KEY="$key"; DB_URL="$EFF_VAL"; return 0; fi
   done
   return 1
 }

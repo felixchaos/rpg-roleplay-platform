@@ -5,11 +5,14 @@
 postgresql:///rpg_platform。于是「只用仓库根 .env」或「直接用默认库」的开发机,
 dev.sh start 会被一个并不存在的问题拦死。
 
-锁的不变量(与 platform_app/db/connection.py 的取法对齐):
-  · rpg/.env、仓库根 .env、环境变量三处任一处配了 DATABASE_URL 都认;rpg/.env 优先;
+锁的不变量(与 platform_app/db/connection.py 的取法、app.py 的 .env 加载语义对齐):
+  · rpg/.env、仓库根 .env、环境变量三处任一处配了 DATABASE_URL 都认;
+  · 同一个键的优先级 rpg/.env > shell 环境变量 > 仓库根 .env(app.py 先以 override=False
+    加载仓库根 .env、再以 override=True 加载 rpg/.env);写了但值为空也算设了,会遮住后面的来源;
   · 配了但连不上 → start 必须拦下(否则后端在 psycopg 重试里挂 300s);
   · 哪里都没配 → 回落默认库,只提示、不拦;默认库连不上也只提示;
-  · 连接串里的密码不回显到终端。
+  · 连接串里的密码不回显到终端:URL 的 user:pass@(密码里带 @ 也算)、查询参数 password=、
+    libpq 的 key=value 形式(password=... / password='...')都要遮。
 
 做法:把 dev.sh 拷进临时目录树,用桩替换 lsof / curl / psql,只跑到 start_backend
 (临时树里没有 .venv,必然在那一步停),不起任何真实进程。
@@ -63,7 +66,7 @@ def _run(tmp_path: Path, cmd: str, *, rpg_env: str | None = None, root_env: str 
         ["bash", str(root / "scripts" / "dev.sh"), cmd],
         env=env, capture_output=True, text=True, timeout=60,
     )
-    urls = psql_log.read_text(encoding="utf-8").split() if psql_log.exists() else []
+    urls = psql_log.read_text(encoding="utf-8").splitlines() if psql_log.exists() else []
     return proc, urls
 
 
@@ -121,3 +124,64 @@ def test_configured_but_unreachable_blocks_start(tmp_path):
     assert proc.returncode == 1
     assert _BLOCKED in proc.stdout, proc.stdout
     assert _REACHED_BACKEND not in proc.stdout
+
+
+# ── 巡检第二轮整合审查 ────────────────────────────────────────────────────────
+# 一、优先级:以前按 rpg/.env → 仓库根 .env → 环境变量找,可 app.py 加载仓库根 .env 时
+# override=False —— shell 里 export 的值优先于仓库根 .env。仓库根 .env 留着一条过期连接串时,
+# dev.sh start 去测过期的串、报「连不上」exit 1,后端其实会用 shell 那条、本来能起来。
+
+def test_shell_env_wins_over_root_env(tmp_path):
+    proc, urls = _run(tmp_path, "start",
+                      root_env="DATABASE_URL=postgresql:///stale_root\n",
+                      shell_env={"DATABASE_URL": "postgresql:///from_shell"})
+    assert urls == ["postgresql:///from_shell"], urls
+    assert "环境变量" in proc.stdout
+    assert _REACHED_BACKEND in proc.stdout
+
+
+def test_rpg_env_wins_over_shell_env(tmp_path):
+    """rpg/.env 以 override=True 加载,连 shell 里 export 的也盖掉。"""
+    _, urls = _run(tmp_path, "status",
+                   rpg_env="DATABASE_URL=postgresql:///from_rpg_env\n",
+                   shell_env={"DATABASE_URL": "postgresql:///from_shell"})
+    assert urls == ["postgresql:///from_rpg_env"]
+
+
+def test_empty_value_masks_later_sources(tmp_path):
+    """写了但值为空也算设了(python-dotenv 照样写进环境):rpg/.env 的 DATABASE_URL= 会把 shell 的
+    盖成空串,后端于是落到下一个键;shell 里 export 了空值,仓库根 .env 的同名键也不会生效。"""
+    _, urls = _run(tmp_path, "status",
+                   rpg_env="DATABASE_URL=\nPOSTGRES_URL=postgresql:///via_pg\n",
+                   shell_env={"DATABASE_URL": "postgresql:///from_shell"})
+    assert urls == ["postgresql:///via_pg"]
+    _, urls = _run(tmp_path / "b", "status",
+                   root_env="DATABASE_URL=postgresql:///from_root\n",
+                   shell_env={"DATABASE_URL": ""})
+    assert urls == ["postgresql:///rpg_platform"]
+
+
+# 二、脱敏:以前只处理 scheme://user:pass@host 一种形式。
+
+@pytest.mark.parametrize("url, secret, keep", [
+    ("host=/tmp dbname=rpg password=s3cretpw", "s3cretpw", "dbname=rpg"),
+    ("host=/tmp password = s3cretpw dbname=rpg", "s3cretpw", "dbname=rpg"),
+    ("host=/tmp password='s3cret pw' dbname=rpg", "s3cret", "dbname=rpg"),
+    ("host=/tmp sslpassword=s3cretpw dbname=rpg", "s3cretpw", "dbname=rpg"),
+    ("postgresql:///rpg?password=s3cretpw&sslmode=require", "s3cretpw", "sslmode=require"),
+    ("postgresql://rpg@127.0.0.1/rpg?sslmode=disable&password=s3cretpw", "s3cretpw", "127.0.0.1"),
+    ("postgresql://rpg:s3c@retpw@127.0.0.1:5432/rpg", "retpw", "127.0.0.1:5432/rpg"),
+    ("postgresql://rpg:s3c?ret@127.0.0.1/rpg", "ret", "127.0.0.1/rpg"),
+])
+def test_password_forms_are_redacted(tmp_path, url, secret, keep):
+    proc, urls = _run(tmp_path, "status", shell_env={"DATABASE_URL": url})
+    assert urls == [url], "测连通性用的是原串,只有回显脱敏"
+    out = proc.stdout + proc.stderr
+    assert secret not in out, out
+    assert keep in out, out
+
+
+def test_redaction_keeps_passwordless_urls_intact(tmp_path):
+    url = "postgresql://rpg@127.0.0.1:5432/rpg?application_name=dev"
+    proc, _ = _run(tmp_path, "status", shell_env={"DATABASE_URL": url})
+    assert url in proc.stdout
