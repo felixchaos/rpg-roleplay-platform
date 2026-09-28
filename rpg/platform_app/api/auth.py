@@ -437,11 +437,15 @@ async def api_auth_schema():
     init_db()
     with connect() as db:
         user_count = db.execute("select count(*) as n from users").fetchone()["n"]
+        reg_mode = _auth.registration_mode(db)
     first_user_is_admin = int(user_count) == 0
     notes: dict = {
         "min_password_length": pw_min,
         "max_password_length": 1024,
-        "invite_only": False,
+        # 与注册闸同源(_auth.registration_mode):仅邀请 → 表单多一个邀请码框;
+        # 关闭注册 → 前端禁用注册页签。以前 invite_only 写死 False,网页端从来填不了邀请码。
+        "invite_only": reg_mode == "invite",
+        "registration_closed": reg_mode == "closed",
     }
     # Cloudflare Turnstile site key（仅当配置时透出 → 前端据此渲染人机验证挂件）。
     from .. import turnstile as _turnstile
@@ -452,8 +456,9 @@ async def api_auth_schema():
     # server 模式下隐藏该字段，防止泄露首注册可抢 admin 的信息（CWE-200）
     if not effective_auth_required():
         notes["first_user_is_admin"] = first_user_is_admin
-    # 邀请码字段：invite 模式时必填
-    invite_field = {"key": "invite_code", "label": "邀请码", "type": "text", "required": notes["invite_only"]}
+    # 邀请码字段:仅邀请模式才出现。不设必填 —— 已预约内测(白名单)的邮箱不用码,由后端注册闸裁定。
+    invite_field = {"key": "invite_code", "label": "邀请码", "type": "text", "required": False,
+                    "placeholder": "已预约内测的邮箱可以不填"}
     register_fields = [
         {"key": "username", "label": "用户名", "type": "text", "required": True},
         {"key": "display_name", "label": "昵称(可选)", "type": "text", "required": False},

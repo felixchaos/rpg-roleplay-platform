@@ -88,17 +88,36 @@ final class API {
 
     // MARK: 注册 / 邮箱验证 / 验证码登录 / 找回密码 / 注销账号
 
+    /// 注册页要看的服务端注册模式(GET /api/auth/schema 的 notes,与网页登录页同源)。
+    /// inviteOnly = 仅邀请(表单多一个邀请码框);closed = 关闭注册。取不到按开放注册处理,不挡人 ——
+    /// 权威判定在后端注册闸。
+    struct RegisterNotes { let inviteOnly: Bool; let closed: Bool }
+    func registerNotes(base: String) async -> RegisterNotes {
+        guard let req = try? request(base, "/api/auth/schema", timeout: 15),
+              let res = try? await session.data(for: req),
+              let obj = (try? JSONSerialization.jsonObject(with: res.0)) as? [String: Any],
+              let notes = obj["notes"] as? [String: Any] else {
+            return RegisterNotes(inviteOnly: false, closed: false)
+        }
+        return RegisterNotes(inviteOnly: (notes["invite_only"] as? Bool) ?? false,
+                             closed: (notes["registration_closed"] as? Bool) ?? false)
+    }
+
     /// 注册。返回 (user 非空=已自动登录) 或 (pendingEmail 非空=需邮箱验证码)。
     struct RegisterOutcome { let user: APIUser?; let pendingEmail: String? }
-    func register(base: String, username: String, password: String, email: String, displayName: String, birthday: String) async throws -> RegisterOutcome {
+    func register(base: String, username: String, password: String, email: String, displayName: String, birthday: String,
+                  inviteCode: String = "") async throws -> RegisterOutcome {
         // 后端 /api/auth/register 强制要 birthday(YYYY-MM-DD)且算 ≥18,缺了直接 400「请提供出生日期」
         // → iOS 之前没传 birthday,注册必失败(群反馈)。
-        let req = try request(base, "/api/auth/register", method: "POST", json: [
+        var body: [String: Any] = [
             "username": username, "password": password, "email": email,
             "display_name": displayName.isEmpty ? username : displayName,
             "birthday": birthday,
             "terms_accepted": true, "age_confirmed": true,
-        ], timeout: 30)
+        ]
+        let invite = inviteCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !invite.isEmpty { body["invite_code"] = invite }   // 仅邀请模式才有意义,其余模式后端忽略
+        let req = try request(base, "/api/auth/register", method: "POST", json: body, timeout: 30)
         let (data, resp) = try await session.data(for: req)
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]

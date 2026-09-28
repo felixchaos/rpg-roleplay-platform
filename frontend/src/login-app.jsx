@@ -211,7 +211,8 @@ function LoginApp() {
 
   const fields = ['verify', 'code-login', 'forgot', 'reset'].includes(mode) ? [] : (schema?.[mode] || []);
   const minPw = schema?.notes?.min_password_length || 8;
-  const inviteOnly = !!schema?.notes?.invite_only;
+  // 关闭注册时禁用注册页签;仅邀请模式照常可注册(表单里多一个邀请码框,由后端注册闸裁定)。
+  const registrationClosed = !!schema?.notes?.registration_closed;
 
   const setField = (k, v) => setValues((prev) => ({ ...prev, [k]: v }));
 
@@ -247,6 +248,11 @@ function LoginApp() {
       if (j.registered === false) {
         setLoginCodeSent(false);
         setLoginCode('');
+        // 关闭注册时注册页签是禁用的,别把人领进去填一整张注定被拒的表。
+        if (registrationClosed) {
+          setErr(t('auth.registration_closed_unregistered'));
+          return;
+        }
         setValues((v) => ({ ...v, email: cleanEmail }));
         setMode('register');
         setErr('');
@@ -643,8 +649,8 @@ function LoginApp() {
                     className={mode === 'register' ? 'active' : ''}
                     aria-selected={mode === 'register'}
                     onClick={() => { setMode('register'); setErr(''); setNotice(''); }}
-                    disabled={inviteOnly}
-                    data-tip={inviteOnly ? t('auth.invite_only_tip') : undefined}>{t('auth.register_tab')}</button>
+                    disabled={registrationClosed}
+                    data-tip={registrationClosed ? t('auth.registration_closed_tip') : undefined}>{t('auth.register_tab')}</button>
           </div>
         )}
 

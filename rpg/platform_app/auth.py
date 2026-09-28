@@ -352,13 +352,13 @@ def register(
         "birthday": birthday.isoformat(),
         "terms_accepted": terms_accepted,
         "age_confirmed": age_confirmed,
-        "invite_code": invite_code,
+        # 由下方注册闸定:只有「仅邀请」模式下凭码进来的人才在 confirm 时原子消费这张码。
+        "invite_code": None,
         "allow_admin": _bootstrap_admin_allowed(setup_token),
         "ip": ip or "",
         "ua": ua or "",
         "created_at": datetime.now(UTC).isoformat(),
     }
-    pending_json = _encode_pending_register(pending_payload)
 
     with connect() as db:
         # ── REG-04: 查 banned_users ───────────────────────────────────────────
@@ -385,30 +385,8 @@ def register(
         if existing_user:
             raise ValueError("注册失败，请检查输入后重试")
 
-        # ── 邀请码校验（invite 模式）─────────────────────────────────────────
-        _check_invite_code(db, invite_code)
-
-        # ── 白名单校验(allowlist 模式) ────────────────────────────────────────
-        # task: 内测期所有注册路径(密码注册 + magic-link)都要白名单 gate。
-        # registration_config.mode='allowlist' 时,只准 registration_allowlist
-        # 里的邮箱注册。开发模式 / open 不变。
-        try:
-            row = db.execute(
-                "select value from app_config where key = 'admin.registration_config' limit 1"
-            ).fetchone()
-            cfg = (row.get("value") if row else None) or {}
-            mode = (cfg.get("mode") or "").lower()
-        except Exception:
-            mode = ""
-        # task: mode='invite' 是 admin UI「仅邀请」按钮的语义,
-        # mode='allowlist' 是 SQL 手动设置的别名 — 两者都走白名单 gate。
-        if mode in ("allowlist", "invite"):
-            wl = db.execute(
-                "select 1 from registration_allowlist where email_norm = %s",
-                (email_norm,),
-            ).fetchone()
-            if not wl:
-                raise ValueError("该邮箱不在内测白名单。本批次仅向早期预约者开放,如需加入下一批请到 play.stellatrix.icu 留邮箱。")
+        # ── 注册闸(管理后台「注册与邀请」的注册模式)───────────────────────────
+        pending_payload["invite_code"] = _registration_gate(db, email_norm, invite_code)
 
         # ── 注册风暴防护:成功路径也限流 ─────────────────────────────────────────
         # _check_rate_limit/_record_login_fail 只在【失败】时计数,对「每次换新用户名+
@@ -451,7 +429,7 @@ def register(
             (email_norm, code_h, expires_at, ip or "", (ua or "")[:512]),
         )
 
-    _pending_store_set(email_norm, pending_json)
+    _pending_store_set(email_norm, _encode_pending_register(pending_payload))
 
     # ── 本地/自托管模式:跳过邮箱验证 ──────────────────────────────────────────
     # 开源用户反馈:自托管没有 RESEND_API_KEY → 验证码发不出(Resend 403)→ 卡注册,
@@ -571,46 +549,82 @@ def _row_get(row, key: str, default=None):
             return default
 
 
-def _check_invite_code(db, invite_code: str | None) -> None:
-    """若 registration_config.mode == 'invite'，校验 invite_code；否则跳过。
+# 注册模式全集。前三个是管理后台能切的;"allowlist" 是早期 SQL 手设的别名(只认白名单,不收邀请码)。
+REGISTRATION_MODES = ("open", "invite", "closed", "allowlist")
+_ALLOWLIST_REJECT_MSG = "该邮箱不在内测白名单。本批次仅向早期预约者开放,如需加入下一批请到 play.stellatrix.icu 留邮箱。"
+_REGISTRATION_CLOSED_MSG = "当前已关闭注册，暂不接受新账号"
 
-    invite_codes 表 v36 已存在。注意: registration_config 来自 app_config 表
-    如果该表/行不存在则视为 open 模式。
+
+def registration_mode(db) -> str:
+    """注册模式的单一读方(密码注册 / Apple 新建账号 / 登录页 schema 共用)。
+
+    app_config.value 是 jsonb,psycopg 读出来已经是 dict;老数据或测试桩可能是 JSON 串,
+    两种形状都认。旧实现对 dict 调 json.loads 抛错被吞 → 恒判 open,「仅邀请」形同虚设。
+    行不存在 / 值坏掉 / mode 为空 → open(与历史行为一致)。
     """
     try:
-        cfg_row = db.execute(
+        row = db.execute(
             "select value from app_config where key = 'admin.registration_config' limit 1"
         ).fetchone()
     except Exception:
-        cfg_row = None
-
-    mode = "open"
-    if cfg_row:
+        return "open"
+    raw = _row_get(row, "value") if row else None
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode("utf-8", "replace")
+    if isinstance(raw, str):
         import json as _json
         try:
-            cfg = _json.loads(cfg_row["value"])
-            mode = cfg.get("mode", "open")
+            raw = _json.loads(raw)
         except Exception:
-            pass
+            return "open"
+    if not isinstance(raw, dict):
+        return "open"
+    return str(raw.get("mode") or "").strip().lower() or "open"
 
-    if mode != "invite":
-        return
 
-    if not invite_code:
-        raise ValueError("当前平台为邀请制，请提供邀请码")
+def _email_allowlisted(db, email_norm: str) -> bool:
+    if not email_norm:
+        return False
+    return db.execute(
+        "select 1 from registration_allowlist where email_norm = %s",
+        (email_norm,),
+    ).fetchone() is not None
 
+
+def _registration_gate(db, email_norm: str, invite_code: str | None) -> str | None:
+    """密码注册的准入判定。放行时返回 confirm 阶段要原子消费的邀请码(None = 不消费)。
+
+    - open:放行;填了邀请码也忽略(移动端表单是选填框,笔误不该让 confirm 抢码失败回滚整个注册)。
+    - closed:一律拒。
+    - allowlist(SQL 别名):只认内测白名单。
+    - invite:内测白名单邮箱直接放行(06-01 定下的「仅邀请」语义);否则必须带有效、未用、
+      未过期的邀请码。码在 confirm 时原子预占,并发双花由那边的 rowcount 判定兜住。
+    """
+    mode = registration_mode(db)
+    if mode == "closed":
+        raise ValueError(_REGISTRATION_CLOSED_MSG)
+    if mode not in ("invite", "allowlist"):
+        return None
+    if _email_allowlisted(db, email_norm):
+        return None
+    if mode == "allowlist":
+        raise ValueError(_ALLOWLIST_REJECT_MSG)
+    code = (invite_code or "").strip()
+    if not code:
+        raise ValueError("当前为邀请制，注册需要填写邀请码（已预约内测的邮箱不用填）")
     row = db.execute(
         """
-        select * from invite_codes
+        select 1 from invite_codes
         where code = %s
           and used_by is null
           and (expires_at is null or expires_at > now())
         limit 1
         """,
-        (invite_code,),
+        (code,),
     ).fetchone()
     if not row:
         raise ValueError("邀请码无效或已使用")
+    return code
 
 
 def _verify_locked(email_norm: str) -> bool:
@@ -873,17 +887,13 @@ def verify_apple_identity_token(identity_token: str, raw_nonce: str = "") -> dic
 
 
 def _assert_registration_allowed(db, email_norm: str) -> None:
-    """allowlist/invite 模式下,新账号邮箱必须在白名单(与密码注册同 gate);open/dev 不拦。"""
-    try:
-        row = db.execute("select value from app_config where key = 'admin.registration_config' limit 1").fetchone()
-        cfg = (row.get("value") if row else None) or {}
-        mode = (cfg.get("mode") or "").lower()
-    except Exception:
-        mode = ""
-    if mode in ("allowlist", "invite"):
-        wl = db.execute("select 1 from registration_allowlist where email_norm = %s", (email_norm,)).fetchone() if email_norm else None
-        if not wl:
-            raise ValueError("该邮箱不在内测白名单。本批次仅向早期预约者开放。")
+    """Apple 新建账号的准入:关闭注册一律拒;allowlist/invite 下邮箱必须在白名单
+    (Apple 登录没有邀请码输入);open/dev 不拦。模式读取与密码注册同源(registration_mode)。"""
+    mode = registration_mode(db)
+    if mode == "closed":
+        raise ValueError(_REGISTRATION_CLOSED_MSG)
+    if mode in ("allowlist", "invite") and not _email_allowlisted(db, email_norm):
+        raise ValueError("该邮箱不在内测白名单。本批次仅向早期预约者开放。")
 
 
 def _apple_unique_username(db, email_norm: str, apple_sub: str) -> str:

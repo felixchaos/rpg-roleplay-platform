@@ -90,17 +90,8 @@ function SectionRegistration({ nav }) {
                     </button>
                   ))}
                 </div>
-
-                {[
-                  { key: 'email_verification', label: t('mobile.admin.registration.email_verification') },
-                  { key: 'auto_approve', label: t('mobile.admin.registration.auto_approve') },
-                ].map(({ key, label }) => (
-                  <div key={key} className="pl-row" style={{ cursor: 'pointer' }} onClick={() => saveReg({ [key]: !regConfig[key] })}>
-                    <span className={`pl-row-ic ${regConfig[key] ? 'ok' : ''}`}><Icon name={regConfig[key] ? 'check' : 'close'} size={17} /></span>
-                    <span className="pl-row-tx"><strong style={{ fontSize: 13.5 }}>{label}</strong></span>
-                    <span style={{ fontSize: 12, color: regConfig[key] ? 'var(--ok)' : 'var(--muted)' }}>{regConfig[key] ? t('mobile.admin.registration.on') : t('mobile.admin.registration.off')}</span>
-                  </div>
-                ))}
+                {/* 「邮箱验证」「自动审批」已撤:后端注册流程从不读它们,与网页管理页同步。 */}
+                <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 }}>{t('mobile.admin.registration.mode_hint')}</div>
               </div>
 
               <div className="pl-sec">
@@ -112,9 +103,10 @@ function SectionRegistration({ nav }) {
                     <span className="pl-row-ic info"><Icon name="key" size={17} /></span>
                     <span className="pl-row-tx">
                       <strong className="mono" style={{ fontSize: 13 }}>{c.code}</strong>
-                      <span>{c.used ? t('mobile.admin.registration.code_used') : t('mobile.admin.registration.code_unused')}{c.expires_at ? ` · ${t('mobile.admin.registration.expires')} ${fmtDate(c.expires_at)}` : ''}{c.note ? ` · ${c.note}` : ''}</span>
+                      <span>{c.used_at ? t('mobile.admin.registration.code_used') : t('mobile.admin.registration.code_unused')}{c.expires_at ? ` · ${t('mobile.admin.registration.expires')} ${fmtDate(c.expires_at)}` : ''}{c.note ? ` · ${c.note}` : ''}</span>
                     </span>
-                    {!c.used && <button style={{ fontSize: 12, color: 'var(--danger)', padding: '4px 8px' }} onClick={() => setDeleteTarget(c.code)}>{t('common.delete')}</button>}
+                    {/* 已用判据是后端返回的 used_at(以前读后端不返回的 used 字段 → 用过的码也显示「未使用」) */}
+                    {!c.used_at && <button style={{ fontSize: 12, color: 'var(--danger)', padding: '4px 8px' }} onClick={() => setDeleteTarget(c.code)}>{t('common.delete')}</button>}
                   </div>
                 ))}
               </div>

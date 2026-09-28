@@ -15,10 +15,16 @@ from ._shared import _get_app_config, _require_admin, _set_app_config, _write_au
 
 _REGISTRATION_CFG_KEY = "admin.registration_config"
 
+# 只收发有读方的键。注册模式由 auth.registration_mode 读(密码注册 / Apple / 登录页 schema)。
+# 早先这里还收发 require_email_verify / auto_approve,但注册流程从来不读它们:
+#   - 邮箱验证是否必需由部署模式决定(server 必须验证、本地/桌面免验证),见 auth.register;
+#     库里存的值也不代表管理员意图 —— 老管理页保存时把 GET 合并出的默认 False 原样回写。
+#   - 没有任何「待审批」状态与审批入口,新账号一律直接可用。
+# 两者都不再展示也不再接收;库里已存的旧值原样留着,不影响任何行为。
+REGISTRATION_WRITABLE_KEYS = ("mode",)
+
 _DEFAULT_REGISTRATION = {
     "mode": "open",
-    "require_email_verify": False,
-    "auto_approve": True,
 }
 
 
@@ -27,7 +33,7 @@ async def admin_get_registration(admin=Depends(_require_admin)):
     with connect() as db:
         cfg = _get_app_config(db, _REGISTRATION_CFG_KEY)
     merged = {**_DEFAULT_REGISTRATION, **cfg}
-    return json_response(merged)
+    return json_response({k: merged.get(k) for k in REGISTRATION_WRITABLE_KEYS})
 
 
 @router.post("/api/admin/registration")
@@ -35,11 +41,18 @@ async def admin_set_registration(
     request: Request,
     admin=Depends(_require_admin),
 ):
+    from ...auth import REGISTRATION_MODES
+
     body = await request.json()
     ip = _client_ip(request)
 
-    allowed_keys = {"mode", "require_email_verify", "auto_approve"}
-    update = {k: v for k, v in body.items() if k in allowed_keys}
+    update = {k: v for k, v in body.items() if k in REGISTRATION_WRITABLE_KEYS}
+    if "mode" in update:
+        mode = str(update["mode"] or "").strip().lower()
+        if mode not in REGISTRATION_MODES:
+            raise HTTPException(400, detail={"error_key": "admin.registration.bad_mode",
+                                             "message": "注册模式只能是开放、仅邀请或关闭"})
+        update["mode"] = mode
 
     with connect() as db:
         _set_app_config(db, _REGISTRATION_CFG_KEY, update)

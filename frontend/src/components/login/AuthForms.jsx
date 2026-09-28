@@ -349,10 +349,12 @@ function MainAuthForm({ submit, schemaErr, schema, fields, values, setField, err
               {schema?.notes?.first_user_is_admin
                 ? t('auth.first_admin')
                 : ''}
-              {schema?.notes?.invite_only
-                ? t('auth.invite_only_note')
-                : ''}
-              {!schema?.notes?.invite_only && !schema?.notes?.first_user_is_admin
+              {schema?.notes?.registration_closed
+                ? t('auth.registration_closed_note')
+                : schema?.notes?.invite_only
+                  ? t('auth.invite_only_note')
+                  : ''}
+              {!schema?.notes?.registration_closed && !schema?.notes?.invite_only && !schema?.notes?.first_user_is_admin
                 ? t('auth.min_password', { min: minPw })
                 : ''}
             </span>

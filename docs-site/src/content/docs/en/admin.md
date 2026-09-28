@@ -64,7 +64,13 @@ Go to Registration & Invites (`#admin-registration`) and click "Generate Invite 
 
 The list shows each code's status: available (green), used (grey, with the user who redeemed it), or expired (red). Unused codes can be deleted at any time.
 
-The same page also lets you switch registration modes (open / invite-only / closed) and toggle "Email verification" and "Auto-approve".
+The same page also lets you switch the registration mode:
+
+- **Open**: anyone can sign up.
+- **Invite only**: the sign-up form gains an invite code field. A valid invite code, or an email already on the early-access list, is required. A code is used up when the sign-up succeeds; each code works once.
+- **Closed**: no new accounts; the "Register" tab on the login page is disabled.
+
+Whether sign-up requires email verification is not set here: server deployments always verify, local / desktop deployments skip it.
 
 ### Handle User Feedback
 

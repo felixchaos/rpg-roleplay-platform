@@ -11,7 +11,6 @@ import CSBadge from '@cloudscape-design/components/badge';
 import CSAlert from '@cloudscape-design/components/alert';
 import CSInput from '@cloudscape-design/components/input';
 import CSSelect from '@cloudscape-design/components/select';
-import CSToggle from '@cloudscape-design/components/toggle';
 import CSModal from '@cloudscape-design/components/modal';
 import CSFormField from '@cloudscape-design/components/form-field';
 import { fmtTime } from './shared.jsx';
@@ -120,7 +119,8 @@ export function AdminRegistrationPage() {
             ? <CSBox textAlign="center" color="inherit">{t('admin_page.registration.empty')}</CSBox>
             : (
               <CSSpaceBetween size="m">
-                <CSFormField label={t('admin_page.registration.field_mode')}>
+                <CSFormField label={t('admin_page.registration.field_mode')}
+                  description={t('admin_page.registration.mode_hint')}>
                   <CSSpaceBetween direction="horizontal" size="xs">
                     {modeOptions.map((opt) => (
                       <CSButton
@@ -134,22 +134,8 @@ export function AdminRegistrationPage() {
                     ))}
                   </CSSpaceBetween>
                 </CSFormField>
-                <CSFormField label={t('admin_page.registration.field_email_verify')}>
-                  <CSToggle
-                    checked={!!regConfig.email_verification}
-                    onChange={({ detail }) => saveReg({ email_verification: detail.checked })}
-                  >
-                    {regConfig.email_verification ? t('admin_page.common.toggle_on') : t('admin_page.common.toggle_off')}
-                  </CSToggle>
-                </CSFormField>
-                <CSFormField label={t('admin_page.registration.field_auto_approve')}>
-                  <CSToggle
-                    checked={!!regConfig.auto_approve}
-                    onChange={({ detail }) => saveReg({ auto_approve: detail.checked })}
-                  >
-                    {regConfig.auto_approve ? t('admin_page.common.toggle_on') : t('admin_page.common.toggle_off')}
-                  </CSToggle>
-                </CSFormField>
+                {/* 「邮箱验证」「自动审批」两个开关已撤:注册流程从不读它们(邮箱验证由部署模式
+                    决定,也没有审批流程),留着只会让人以为改了有用。见 api/admin/registration.py。 */}
               </CSSpaceBetween>
             )
         }
@@ -178,18 +164,22 @@ export function AdminRegistrationPage() {
             { id: 'code', header: t('admin_page.registration.col_code'), cell: (c) => <code>{c.code}</code> },
             { id: 'note', header: t('admin_page.registration.col_note'), cell: (c) => c.note || '—' },
             {
+              // 字段以 GET /api/admin/invite-codes 为准:used_at / used_by_username / expires_at。
+              // 以前读 used_by / expired_at(后端从不返回)→ 用过的码永远显示「可用」、过期的也不标。
               id: 'status', header: t('admin_page.registration.col_status'),
-              cell: (c) => c.used_by
-                ? <CSBadge color="grey">{t('admin_page.registration.status_used', { user: c.used_by })}</CSBadge>
-                : c.expired_at && new Date(c.expired_at) < new Date()
+              cell: (c) => c.used_at
+                ? <CSBadge color="grey">{c.used_by_username
+                    ? t('admin_page.registration.status_used', { user: c.used_by_username })
+                    : t('admin_page.registration.status_used_anon')}</CSBadge>
+                : c.expires_at && new Date(c.expires_at) < new Date()
                   ? <CSBadge color="red">{t('admin_page.registration.status_expired')}</CSBadge>
                   : <CSBadge color="green">{t('admin_page.registration.status_available')}</CSBadge>,
             },
-            { id: 'expires', header: t('admin_page.registration.col_expires'), cell: (c) => fmtTime(c.expires_at || c.expired_at) },
+            { id: 'expires', header: t('admin_page.registration.col_expires'), cell: (c) => fmtTime(c.expires_at) },
             { id: 'created', header: t('admin_page.common.created_at'), cell: (c) => fmtTime(c.created_at) },
             {
               id: 'actions', header: t('admin_page.common.actions'),
-              cell: (c) => !c.used_by
+              cell: (c) => !c.used_at
                 ? <CSButton variant="inline-link" onClick={() => setDeleteTarget(c.code)}>{t('common.delete')}</CSButton>
                 : null,
             },

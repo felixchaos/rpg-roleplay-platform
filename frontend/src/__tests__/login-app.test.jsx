@@ -83,4 +83,36 @@ describe('LoginApp', () => {
       expect(container.textContent).toContain('Username');
     });
   });
+
+  // 注册页签跟着后端注册模式走(与后端注册闸同源的 schema notes):
+  // 关闭注册 → 禁用;仅邀请 → 照常可注册(以前把 invite_only 当成「注册关闭」)。
+  function useSchemaNotes(notes) {
+    const schema = { ...MOCK_SCHEMA, notes: { ...MOCK_SCHEMA.notes, ...notes } };
+    window.fetch = vi.fn().mockImplementation((url) => {
+      if (typeof url === 'string' && url.includes('/auth/schema')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(schema),
+          headers: new Headers({ 'content-type': 'application/json' }),
+        });
+      }
+      return Promise.reject(new Error('unexpected fetch: ' + url));
+    });
+  }
+
+  it('registration_closed disables the register tab', async () => {
+    useSchemaNotes({ registration_closed: true });
+    render(<LoginApp />);
+    await waitFor(() => expect(screen.getByText('Username')).toBeInTheDocument());
+    expect(screen.getByRole('tab', { name: '注册' })).toBeDisabled();
+    expect(document.body.textContent).toContain('当前已关闭注册');
+  });
+
+  it('invite_only keeps the register tab usable', async () => {
+    useSchemaNotes({ invite_only: true });
+    render(<LoginApp />);
+    await waitFor(() => expect(screen.getByText('Username')).toBeInTheDocument());
+    expect(screen.getByRole('tab', { name: '注册' })).not.toBeDisabled();
+    expect(document.body.textContent).toContain('邀请码');
+  });
 });

@@ -66,6 +66,9 @@ private struct AuthScaffold<Content: View>: View {
 struct RegisterView: View {
     @EnvironmentObject var store: AppStore
     @State private var username = ""; @State private var email = ""; @State private var password = ""
+    @State private var inviteCode = ""
+    // 服务端注册模式(仅邀请 → 多一个邀请码框;关闭注册 → 不让提交)。与网页登录页读同一份 schema。
+    @State private var regNotes = API.RegisterNotes(inviteOnly: false, closed: false)
     @State private var birthday = Calendar.current.date(byAdding: .year, value: -18, to: Date()) ?? Date()
     @State private var agree = false
     @State private var busy = false; @State private var err: String?
@@ -74,6 +77,14 @@ struct RegisterView: View {
 
     var body: some View {
         AuthScaffold(title: "注册账号", subtitle: "创建账号后即可在所有设备同步剧本、存档与角色。") {
+            if regNotes.closed {
+                Text(loc: "当前已关闭注册，暂不接受新账号。").font(Theme.ui(13)).foregroundStyle(Theme.danger)
+            }
+            if regNotes.inviteOnly {
+                AuthField(icon: "ticket", placeholder: "邀请码(已预约内测的邮箱可以不填)", isEmpty: inviteCode.isEmpty) {
+                    TextField("", text: $inviteCode).textInputAutocapitalization(.never).autocorrectionDisabled()
+                }
+            }
             AuthField(icon: "person", placeholder: "用户名", isEmpty: username.isEmpty) {
                 TextField("", text: $username).textInputAutocapitalization(.never).autocorrectionDisabled()
             }
@@ -108,10 +119,11 @@ struct RegisterView: View {
         .sheet(item: $pending) { p in
             EmailVerifyView(email: p.email).environmentObject(store)
         }
+        .task { regNotes = await store.api.registerNotes(base: store.serverURL) }
     }
     private var age: Int { Calendar.current.dateComponents([.year], from: birthday, to: Date()).year ?? 0 }
     private var canSubmit: Bool {
-        !username.isEmpty && email.contains("@") && password.count >= 8 && agree && age >= 18
+        !regNotes.closed && !username.isEmpty && email.contains("@") && password.count >= 8 && agree && age >= 18
     }
     private func submit() async {
         busy = true; err = nil; defer { busy = false }
@@ -119,7 +131,8 @@ struct RegisterView: View {
         let fmt = DateFormatter(); fmt.dateFormat = "yyyy-MM-dd"; fmt.locale = Locale(identifier: "en_US_POSIX")
         let bday = fmt.string(from: birthday)
         do {
-            let r = try await store.api.register(base: store.serverURL, username: username, password: password, email: email, displayName: username, birthday: bday)
+            let r = try await store.api.register(base: store.serverURL, username: username, password: password, email: email, displayName: username, birthday: bday,
+                                                 inviteCode: regNotes.inviteOnly ? inviteCode : "")
             if let u = r.user { store.user = u }                          // 自动登录
             else { pending = PendingEmail(email: r.pendingEmail ?? email) } // 需邮箱验证码
         } catch { self.err = (error as? LocalizedError)?.errorDescription ?? "注册失败" }

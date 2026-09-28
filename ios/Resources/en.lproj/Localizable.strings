@@ -570,6 +570,8 @@
 "用户名" = "Username";
 "邮箱" = "Email";
 "密码(至少 8 位)" = "Password (min 8 chars)";
+"邀请码(已预约内测的邮箱可以不填)" = "Invite code (optional for early-access emails)";
+"当前已关闭注册，暂不接受新账号。" = "Registration is closed; no new accounts are being accepted.";
 "我已年满 18 周岁,并同意服务条款与隐私政策。" = "I am 18+ and agree to the Terms of Service and Privacy Policy.";
 "注册" = "Sign up";
 "邮箱验证" = "Email verification";
