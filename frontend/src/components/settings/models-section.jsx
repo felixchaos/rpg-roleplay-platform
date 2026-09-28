@@ -538,6 +538,10 @@ function ModelsSection() {
                 proxy: proxyUrl,
               };
             }
+            // 编辑已有供应商:把列表上那个开关的当前状态一起发回去。后端没收到 enabled 时按「启用」
+            // 落库(手机端 / iOS / 首配弹窗这些没有开关的地方,重填 key 就该能用),所以在这里关掉
+            // 某个供应商、再改一下代理或重填 key,它会被悄悄打开。
+            if (credBody && !addingApi && existing) credBody.enabled = existing.enabled !== false;
             if (credBody) {
               try {
                 await window.api.credentials.set(credBody);

@@ -11,7 +11,9 @@
  *    - 只改连接方式(代理)不重填 key 也要落库(走 keep_key 并带 proxy,地址没改就回写原覆盖值);
  *    - 写凭据只有一个 catch,keep_key 路径失败不再冒出「元数据已保存」的假警告
  *      (catalogWritten 门控,F10 第 5 条);
- *    - 失败后回读一次后端真实状态。
+ *    - 失败后回读一次后端真实状态;
+ *    - 编辑已有供应商时把列表上那个开关的当前状态一起发回去:后端没收到 enabled 时按「启用」
+ *      落库,以前在这里关掉某个供应商、再改一下代理或重填 key,它就被悄悄打开了。
  * 3. 首配拦截弹窗的内联供应商卡片:不带 proxy 键(后端据此保留已存代理),失败后回读凭据。
  * 4. __refreshPlatform:auth.me 网络失败 ≠ 未登录,保留原登录态。
  */
@@ -126,7 +128,7 @@ describe('api-client:探测类请求的超时与结果未知时的广播', () =>
 // ════════════════════════════════════════════════════════════════════════
 // 2. 设置页 ModelsSection.onConfirm
 // ════════════════════════════════════════════════════════════════════════
-function installSettingsApi({ role = 'user', credSet, proxyUrl = '', override = '' } = {}) {
+function installSettingsApi({ role = 'user', credSet, proxyUrl = '', override = '', enabled = true } = {}) {
   window.RPG_AUTH = { authed: true, online: true };
   window.MOCK_PLATFORM = { user: { role } };
   window.__apiToast = vi.fn();
@@ -141,7 +143,7 @@ function installSettingsApi({ role = 'user', credSet, proxyUrl = '', override = 
     },
     credentials: {
       list: vi.fn().mockResolvedValue({ items: [
-        { api_id: 'deepseek', has_credential: true, key_hint: 'abcd', base_url_override: override, proxy_url: proxyUrl },
+        { api_id: 'deepseek', has_credential: true, key_hint: 'abcd', base_url_override: override, proxy_url: proxyUrl, enabled },
       ] }),
       set: credSet || vi.fn().mockResolvedValue({ ok: true }),
     },
@@ -174,7 +176,26 @@ describe('设置页保存凭据', () => {
       api_id: 'deepseek', api_key: '', keep_key: true,
       base_url_override: '',   // 凭据原本没有覆盖地址:不能把目录地址钉成覆盖
       proxy: 'http://127.0.0.1:7890',
+      enabled: true,
     });
+  });
+
+  it('已关掉的供应商:只改代理 → 发回 enabled:false,不被悄悄打开', async () => {
+    installSettingsApi({ enabled: false });
+    const onConfirm = await mountSettings();
+    await act(async () => {
+      await onConfirm()({ ...EDIT, base_url: 'https://api.deepseek.com/v1', proxy: 'http_proxy', proxy_url: 'http://127.0.0.1:7890' });
+    });
+    expect(window.api.credentials.set.mock.calls[0][0]).toMatchObject({ keep_key: true, enabled: false });
+  });
+
+  it('已关掉的供应商:重填 key → 同样保持关闭', async () => {
+    installSettingsApi({ enabled: false });
+    const onConfirm = await mountSettings();
+    await act(async () => {
+      await onConfirm()({ ...EDIT, base_url: 'https://api.deepseek.com/v1', api_key: 'sk-new' });
+    });
+    expect(window.api.credentials.set.mock.calls[0][0]).toMatchObject({ api_key: 'sk-new', enabled: false });
   });
 
   it('代理从 HTTP 改回直连 → keep_key 带空串(清掉已存代理)', async () => {

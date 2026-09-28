@@ -132,7 +132,7 @@ Switch to the **Usage** tab in the detail panel to see request counts, input/out
 A: Click **Validate Connection** for detailed error output. Common causes: incorrect key, wrong Base URL (Google AI Studio requires `/v1beta/openai` at the end), or a missing HTTP proxy for connections to overseas services.
 
 **Q: A provider I disabled still shows models in the selector.**
-A: Confirm the switch at the right end of that provider's row in the list is off (grey). The switch only disables your own key for that provider (it stops being used; turn it back on to resume) and does not affect other users. To hide only specific models while keeping the provider active, use **Manage Visible Models**.
+A: Confirm the switch at the right end of that provider's row in the list is off (grey). The switch only disables your own key for that provider (it stops being used; turn it back on to resume) and does not affect other users. Editing the provider on this page (proxy, address, or a new key) leaves the switch as it is; saving a new key from the mobile web app, the iOS app, or the first-run setup dialog turns it back on. To hide only specific models while keeping the provider active, use **Manage Visible Models**.
 
 **Q: Can I configure multiple providers at the same time?**
 A: Yes. Different providers' models can be assigned to different game modules — see [Module Model Assignment](/en/settings-modules).
