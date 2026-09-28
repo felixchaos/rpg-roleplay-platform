@@ -18,7 +18,7 @@ import { resolve } from 'path';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 
 import { createNode, renameNode, fetchGroupList } from '../components/md-editor/node-crud.js';
-import { saveNodeContent } from '../components/md-editor/node-io.js';
+import { saveNodeContent, loadNodeContentMeta } from '../components/md-editor/node-io.js';
 import { FileTree } from '../components/md-editor/FileTree.jsx';
 import { toMd, fromMd } from '../lib/md-serialize.js';
 
@@ -116,6 +116,16 @@ describe('fetchGroupList', () => {
     const items = await fetchGroupList('worldbook', 7);
     expect(calls[0].query.fetch_all).toBe('true');
     expect(items[0]).toMatchObject({ id: 3, name: '铁人团', label: '铁人团' });
+  });
+
+  it('打开一条世界书只读这一条,不再为一条拉全量列表', async () => {
+    route('GET', /\/scripts\/7\/worldbook\/3$/, () => json(200, {
+      ok: true, entry: { id: 3, title: '铁人团', content: '正文', keys: [] },
+    }));
+    route('GET', /\/scripts\/7\/worldbook$/, () => json(200, { ok: true, items: [] }));
+    const { content } = await loadNodeContentMeta('worldbook', 7, 3);
+    expect(calls.map((c) => `${c.method} ${c.path.replace(/^\/api(\/v1)?/, '')}`)).toEqual(['GET /scripts/7/worldbook/3']);
+    expect(content).toContain('铁人团');
   });
 
   it('anchor 带裸名字(不含章节区间后缀)', async () => {

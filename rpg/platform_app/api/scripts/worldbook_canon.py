@@ -22,6 +22,19 @@ async def api_script_worldbook(script_id: int, limit: int | None = None, cursor:
         return value_error_response(exc)
 
 
+@router.get("/api/scripts/{script_id}/worldbook/{entry_id}")
+async def api_script_worldbook_entry(script_id: int, entry_id: int, user=Depends(require_user)):
+    """单条世界书条目(md-editor 打开一条)。读权限与列表相同;不带向量列。"""
+    try:
+        entry = knowledge.get_worldbook_entry(user["id"], script_id, entry_id)
+    except ValueError as exc:
+        return value_error_response(exc)
+    if not entry:
+        return json_response({"ok": False, "error": "这条世界书条目不存在(可能已被删除),刷新列表后再试"},
+                             status_code=404)
+    return json_response({"ok": True, "entry": entry})
+
+
 # canon 实体列表(MD 编辑器按类型拉取)。鉴权 owner 或 subscriber(只读),与 GET worldbook
 # 的访问模型一致;分页/返回沿用 page_payload(items + page.{limit,next_cursor,has_more})。
 _CANON_LIST_COLS = (

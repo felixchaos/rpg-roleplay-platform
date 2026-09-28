@@ -46,7 +46,7 @@ from platform_app.knowledge.session import (
     ensure_game_session,
     sync_script_knowledge,
 )
-from platform_app.knowledge.worldbook import list_worldbook_entries
+from platform_app.knowledge.worldbook import get_worldbook_entry, list_worldbook_entries
 from platform_app.knowledge.worldline import (
     list_worldline_variables,
     remove_worldline_variable,
@@ -77,4 +77,5 @@ __all__ = [
     "set_character_card_enabled",
     "set_character_card_protagonist",
     "list_worldbook_entries",
+    "get_worldbook_entry",
 ]

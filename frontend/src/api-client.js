@@ -550,6 +550,8 @@
       cardGet: (sid, cid) => GET(`${API_PREFIX}/scripts/${sid}/character-cards/${cid}`),
       cardDelete: (sid, cid) => POST(`${API_PREFIX}/scripts/${sid}/character-cards/${cid}/delete`, {}),
       worldbook: (sid, q) => GET(`${API_PREFIX}/scripts/${sid}/worldbook`, q),
+      // 单条(md-editor 打开一条用;列表 / 单条都不带向量列)
+      worldbookGet: (sid, eid) => GET(`${API_PREFIX}/scripts/${sid}/worldbook/${eid}`),
       worldbookCreate: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/worldbook`, body),
       worldbookUpdate: (sid, eid, body) => PUT(`${API_PREFIX}/scripts/${sid}/worldbook/${eid}`, body),
       worldbookDelete: (sid, eid) => DEL(`${API_PREFIX}/scripts/${sid}/worldbook/${eid}`, {}),

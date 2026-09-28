@@ -79,3 +79,60 @@ describe('CanonEntityEditorView', () => {
     expect(window.__apiToast).toHaveBeenCalledWith('请填写名称', expect.objectContaining({ kind: 'warn' }));
   });
 });
+
+// ── 大表格:单元格不重挂 + 分页 ─────────────────────────────────────────────
+// 单元格 / 新建表单 / 详情面板以前定义在组件函数体里,每次渲染都是新的组件类型 → 整表单元格
+// 全部重挂:行内改名每敲一个键重挂几千行,新建表单的输入框每敲一个字就丢焦点。
+describe('CanonEntityEditorView 大表格', () => {
+  beforeEach(() => { delete window.api; });
+
+  const many = (n) => Array.from({ length: n }, (_, i) => ({
+    logical_key: `k${i}`, name: `实体${String(i).padStart(4, '0')}`, type: 'character', importance: n - i, summary: '',
+  }));
+
+  it('行内改名:敲字时输入框不重挂', async () => {
+    installApi();
+    render(<CanonEntityEditorView scriptId={9} ownerId={1} currentUserId={1} />);
+    fireEvent.click(await screen.findByText('北港'));
+    const input = screen.getByDisplayValue('北港');
+    fireEvent.change(input, { target: { value: '北港城' } });
+    expect(screen.getByDisplayValue('北港城')).toBe(input);
+  });
+
+  it('新建表单:敲字时输入框不重挂', async () => {
+    installApi();
+    render(<CanonEntityEditorView scriptId={9} ownerId={1} currentUserId={1} />);
+    await screen.findByText('北港');
+    fireEvent.click(screen.getByText('新建知识库条目'));
+    const input = await screen.findByPlaceholderText('人物/势力名');
+    fireEvent.change(input, { target: { value: '灵' } });
+    expect(screen.getByPlaceholderText('人物/势力名')).toBe(input);
+  });
+
+  it('几百条实体分页渲染,不一次铺满', async () => {
+    installApi({ canonList: vi.fn().mockResolvedValue({ ok: true, items: many(250) }) });
+    render(<CanonEntityEditorView scriptId={9} ownerId={1} currentUserId={1} />);
+    await screen.findByText('实体0000');
+    expect(screen.queryByText('实体0099')).toBeTruthy();
+    expect(screen.queryByText('实体0100')).toBe(null);
+    fireEvent.click(screen.getByRole('button', { name: /2/ }));
+    await screen.findByText('实体0100');
+    expect(screen.queryByText('实体0000')).toBe(null);
+  });
+
+  it('删掉上级后,子实体的上级列不再挂着已删除的 key', async () => {
+    const rows = [
+      { logical_key: 'dj', name: '德军', type: 'faction', importance: 5, summary: '' },
+      { logical_key: 'trt', name: '铁人团', type: 'faction', importance: 4, summary: '', parent_logical_key: 'dj' },
+    ];
+    installApi({ canonList: vi.fn().mockResolvedValue({ ok: true, items: rows }) });
+    render(<CanonEntityEditorView scriptId={9} ownerId={1} currentUserId={1} />);
+    await screen.findByText('铁人团');
+    expect(screen.getAllByText('德军').length).toBe(2); // 名称列 + 铁人团的上级列
+    fireEvent.click(screen.getAllByText('删除')[0]);
+    await act(async () => { fireEvent.click(screen.getByText('确认')); });
+    await waitFor(() => expect(window.api.scripts.canonDelete).toHaveBeenCalledWith(9, 'dj'));
+    await waitFor(() => expect(screen.queryByText('德军')).toBe(null));
+    expect(screen.queryByText('dj')).toBe(null);
+  });
+});

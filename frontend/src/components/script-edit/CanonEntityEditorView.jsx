@@ -1,7 +1,12 @@
 /* CanonEntityEditorView — inline table editor for kb_canon_entities.
    No modal dialogs. SplitPanel for detail. Inline confirmation for delete.
    AWS Cloudscape Design System throughout.
-   Mechanically extracted from pages/script-edit-canon.jsx (zero behavior change). */
+   Mechanically extracted from pages/script-edit-canon.jsx (zero behavior change).
+
+   单元格 / 删除确认 / 详情面板 / 新建表单都定义在模块顶层(以前在组件函数体里,每次渲染都是
+   新的组件类型 → 整表单元格全部卸载重挂:行内改名每敲一个键重挂几千行,新建表单每敲一个字
+   输入框就丢焦点)。回调经 ref 保持引用稳定,单元格 memo 后只有正在编辑的那一格随输入重渲染。
+   canonList 全量拉取后按页渲染(每页 CANON_PAGE_SIZE 行),上级下拉带过滤。 */
 
 import React from 'react';
 import { useTranslation } from 'react-i18next';
@@ -24,6 +29,7 @@ import CSTextarea from '@cloudscape-design/components/textarea';
 import CSKeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
 import CSSegmentedControl from '@cloudscape-design/components/segmented-control';
+import CSPagination from '@cloudscape-design/components/pagination';
 
 import { snippet } from './helpers.js';
 
@@ -33,6 +39,135 @@ import { snippet } from './helpers.js';
 // 与后端白名单一致(kb.canon_repo.CANON_ENTITY_TYPES;organization 是提取链路会产出的类型)。
 const ENTITY_TYPES = ['character', 'faction', 'organization', 'location', 'item', 'concept'];
 const IMPORTANCE_OPTIONS = [1, 2, 3, 4, 5].map((n) => ({ value: String(n), label: String(n) }));
+const CANON_PAGE_SIZE = 100;
+const EMPTY_NEW_FORM = { logical_key: '', name: '', type: 'character', entity_subtype: '', importance: '3', summary: '' };
+
+const editableStyle = (readonly, cursor) => ({
+  cursor: readonly ? 'default' : cursor,
+  borderBottom: readonly ? 'none' : '1px dashed var(--color-border-divider-default, #ccc)',
+});
+
+// 引用稳定的回调:返回的函数身份永远不变,调用时总是走最新一次渲染的实现。
+// 传给 memo 过的单元格,父组件重渲染时单元格不会因为回调换了新函数而跟着重渲染。
+function useStableCallback(fn) {
+  const ref = React.useRef(fn);
+  ref.current = fn;
+  return React.useCallback((...args) => ref.current(...args), []);
+}
+
+/* ------------------------------------------------------------------ */
+/* Table cells (module level: stable component types, no remount)       */
+/* ------------------------------------------------------------------ */
+/* inline editable cell — name。editValue:这一格正在编辑时是输入中的值,否则 null。 */
+const CellName = React.memo(function CellName({ entity, editValue, readonly, onStartEdit, onEditChange, onCancelEdit, onSave }) {
+  if (editValue != null) {
+    return (
+      <CSInput
+        autoFocus
+        value={editValue}
+        onChange={({ detail }) => onEditChange(detail.value)}
+        onKeyDown={({ detail }) => {
+          if (detail.key === 'Enter') onSave(entity, 'name', editValue);
+          if (detail.key === 'Escape') onCancelEdit();
+        }}
+        onBlur={() => onSave(entity, 'name', editValue)}
+      />
+    );
+  }
+  return (
+    <span
+      style={editableStyle(readonly, 'text')}
+      onClick={() => !readonly && onStartEdit(entity, 'name', entity.name || '')}
+    >
+      {entity.name || '—'}
+    </span>
+  );
+});
+
+/* inline editable cell — importance */
+const CellImportance = React.memo(function CellImportance({ entity, editValue, readonly, onStartEdit, onCancelEdit, onSave }) {
+  if (editValue != null) {
+    return (
+      <CSSelect
+        selectedOption={IMPORTANCE_OPTIONS.find((o) => o.value === String(editValue)) || null}
+        options={IMPORTANCE_OPTIONS}
+        onChange={({ detail }) => onSave(entity, 'importance', detail.selectedOption.value)}
+        onBlur={onCancelEdit}
+      />
+    );
+  }
+  return (
+    <span
+      style={editableStyle(readonly, 'pointer')}
+      onClick={() => !readonly && onStartEdit(entity, 'importance', String(entity.importance ?? 3))}
+    >
+      {entity.importance ?? '—'}
+    </span>
+  );
+});
+
+/* inline editable cell — parent。上级选项只在这一格进入编辑时才生成(几千条实体时
+   不为每一行都备一份),排除实体自己,并带过滤框。 */
+const CellParent = React.memo(function CellParent({ entity, editValue, readonly, parentName, items, onStartEdit, onCancelEdit, onSave }) {
+  const { t } = useTranslation();
+  const editing = editValue != null;
+  const options = React.useMemo(() => {
+    if (!editing) return [];
+    const opts = [{ value: '', label: t('scripts.edit.canon.no_parent') }];
+    items.forEach((e) => {
+      if (e.logical_key !== entity.logical_key) opts.push({ value: e.logical_key, label: e.name || e.logical_key });
+    });
+    return opts;
+  }, [editing, items, entity.logical_key, t]);
+  if (editing) {
+    const curOpt = options.find((o) => o.value === (editValue || '')) || options[0];
+    return (
+      <CSSelect
+        selectedOption={curOpt}
+        options={options}
+        filteringType="auto"
+        onChange={({ detail }) => onSave(entity, 'parent_logical_key', detail.selectedOption.value || null)}
+        onBlur={onCancelEdit}
+      />
+    );
+  }
+  return (
+    <span
+      style={editableStyle(readonly, 'pointer')}
+      onClick={() => !readonly && onStartEdit(entity, 'parent_logical_key', entity.parent_logical_key || '')}
+    >
+      {parentName}
+    </span>
+  );
+});
+
+/* inline delete confirmation row */
+const DeleteConfirmRow = React.memo(function DeleteConfirmRow({ entity, confirming, readonly, onAsk, onConfirm, onCancel }) {
+  const { t } = useTranslation();
+  if (!confirming) {
+    return (
+      <CSButton
+        variant="inline-link"
+        iconName="remove"
+        disabled={readonly}
+        onClick={() => onAsk(entity.logical_key)}
+      >
+        {t('common.delete')}
+      </CSButton>
+    );
+  }
+  return (
+    <CSSpaceBetween direction="horizontal" size="xs">
+      <CSStatusIndicator type="warning">{t('scripts.edit.canon.confirm_delete')}</CSStatusIndicator>
+      <CSButton variant="inline-link" iconName="check" onClick={() => onConfirm(entity.logical_key)}>
+        {t('common.confirm')}
+      </CSButton>
+      <CSButton variant="inline-link" iconName="close" onClick={onCancel}>
+        {t('common.cancel')}
+      </CSButton>
+    </CSSpaceBetween>
+  );
+});
 
 /* ------------------------------------------------------------------ */
 /* CanonEntityEditorView                                                 */
@@ -50,17 +185,18 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
   const [typeFilter, setTypeFilter] = React.useState('all');
   const [query, setQuery] = React.useState('');
   const [sortDesc, setSortDesc] = React.useState(true);
+  const [page, setPage] = React.useState(1);
 
   /* selection / split panel */
   const [selected, setSelected] = React.useState(null); // entity object
   const [splitOpen, setSplitOpen] = React.useState(false);
 
-  /* inline edit state — map of logical_key → { field: pendingValue } */
-  const [editCell, setEditCell] = React.useState(null); // { key, field, value }
+  /* inline edit state — { key, field, value } */
+  const [editCell, setEditCell] = React.useState(null);
 
   /* new entity form */
   const [adding, setAdding] = React.useState(false);
-  const [newForm, setNewForm] = React.useState({ logical_key: '', name: '', type: 'character', entity_subtype: '', importance: '3', summary: '' });
+  const [newForm, setNewForm] = React.useState(EMPTY_NEW_FORM);
 
   /* delete confirmation inline */
   const [confirmDelete, setConfirmDelete] = React.useState(null); // logical_key
@@ -103,23 +239,21 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
     return list;
   }, [items, query, sortDesc]);
 
+  // 换筛选 / 类型 / 排序回到第一页;删掉条目后页数变少时夹到最后一页。
+  React.useEffect(() => { setPage(1); }, [query, typeFilter, sortDesc]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / CANON_PAGE_SIZE));
+  const curPage = Math.min(page, pageCount);
+  const paged = React.useMemo(
+    () => filtered.slice((curPage - 1) * CANON_PAGE_SIZE, curPage * CANON_PAGE_SIZE),
+    [filtered, curPage],
+  );
+
   /* lookup parent name */
   const entityMap = React.useMemo(() => {
     const m = {};
     items.forEach((e) => { m[e.logical_key] = e; });
     return m;
   }, [items]);
-
-  /* parent options for select */
-  const parentOptions = React.useMemo(() => {
-    const opts = [{ value: '', label: t('scripts.edit.canon.no_parent') }];
-    items.forEach((e) => {
-      if (!selected || e.logical_key !== selected.logical_key) {
-        opts.push({ value: e.logical_key, label: e.name || e.logical_key });
-      }
-    });
-    return opts;
-  }, [items, selected]);
 
   /* ---- API calls ---- */
   // 统一走 api-client:非 2xx 抛 ApiError,message 就是后端 error 原文(直接进 toast detail)。
@@ -146,7 +280,7 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
   }
 
   /* ---- inline cell save ---- */
-  async function saveCell(entity, field, value) {
+  const saveCell = useStableCallback(async (entity, field, value) => {
     if (readonly) return;
     const patch = { [field]: field === 'importance' ? (parseInt(value, 10) || null) : value };
     try {
@@ -158,10 +292,16 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
       window.__apiToast?.(t('scripts.toast.save_fail'), { kind: 'danger', detail: e?.message });
     }
     setEditCell(null);
-  }
+  });
+  const startEdit = React.useCallback((entity, field, value) => setEditCell({ key: entity.logical_key, field, value }), []);
+  const changeEdit = React.useCallback((value) => setEditCell((c) => (c ? { ...c, value } : c)), []);
+  const cancelEdit = React.useCallback(() => setEditCell(null), []);
+  const editValueFor = (entity, field) => (
+    editCell && editCell.key === entity.logical_key && editCell.field === field ? editCell.value : null
+  );
 
   /* ---- add new entity ---- */
-  async function submitAdd() {
+  const submitAdd = useStableCallback(async () => {
     if (readonly) return;
     const body = { ...newForm, name: (newForm.name || '').trim(), importance: parseInt(newForm.importance, 10) || 3 };
     if (!body.name) {
@@ -171,30 +311,36 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
     try {
       await apiPost(body);
       setAdding(false);
-      setNewForm({ logical_key: '', name: '', type: 'character', entity_subtype: '', importance: '3', summary: '' });
+      setNewForm(EMPTY_NEW_FORM);
       setReloadTick((x) => x + 1);
       window.__apiToast?.(t('scripts.edit.canon.add_ok'), { kind: 'ok' });
     } catch (e) {
       window.__apiToast?.(t('scripts.toast.save_fail'), { kind: 'danger', detail: e?.message });
     }
-  }
+  });
+  const cancelAdd = React.useCallback(() => { setAdding(false); setNewForm(EMPTY_NEW_FORM); }, []);
 
   /* ---- delete ---- */
-  async function doDelete(logicalKey) {
+  // 后端删除时把挂在它下面的子实体改成无上级,本地同步(否则上级列显示已删除的原始 key)。
+  const detachLocal = (e, logicalKey) => (e.parent_logical_key === logicalKey ? { ...e, parent_logical_key: '' } : e);
+  const doDelete = useStableCallback(async (logicalKey) => {
     if (readonly) return;
     try {
       await apiDelete(logicalKey);
-      setItems((arr) => arr.filter((e) => e.logical_key !== logicalKey));
+      setItems((arr) => arr.filter((e) => e.logical_key !== logicalKey).map((e) => detachLocal(e, logicalKey)));
       if (selected?.logical_key === logicalKey) { setSelected(null); setSplitOpen(false); }
+      else if (selected) setSelected((s) => (s ? detachLocal(s, logicalKey) : s));
       setConfirmDelete(null);
       window.__apiToast?.(t('scripts.edit.canon.deleted'), { kind: 'ok' });
     } catch (e) {
       window.__apiToast?.(t('scripts.toast.delete_fail'), { kind: 'danger', detail: e?.message });
     }
-  }
+  });
+  const askDelete = React.useCallback((logicalKey) => setConfirmDelete(logicalKey), []);
+  const cancelDelete = React.useCallback(() => setConfirmDelete(null), []);
 
   /* ---- detail panel save ---- */
-  async function saveDetail() {
+  const saveDetail = useStableCallback(async () => {
     if (!selected || readonly) return;
     const patch = { ...detailEdit };
     if ('importance' in patch) patch.importance = parseInt(patch.importance, 10) || null;
@@ -212,12 +358,9 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
     } catch (e) {
       window.__apiToast?.(t('scripts.toast.save_fail'), { kind: 'danger', detail: e?.message });
     } finally { setSavingDetail(false); }
-  }
+  });
 
-  /* ---- children lookup ---- */
-  function childrenOf(logicalKey) {
-    return items.filter((e) => e.parent_logical_key === logicalKey);
-  }
+  const openDetail = React.useCallback((e) => { setSelected(e); setDetailEdit({}); setSplitOpen(true); }, []);
 
   /* ---------------------------------------------------------------- */
   /* Render helpers                                                     */
@@ -236,290 +379,22 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
     );
   }
 
-  /* inline editable cell — name */
-  function CellName({ entity }) {
-    const editing = editCell?.key === entity.logical_key && editCell?.field === 'name';
-    if (editing) {
-      return (
-        <CSInput
-          autoFocus
-          value={editCell.value}
-          onChange={({ detail }) => setEditCell((c) => ({ ...c, value: detail.value }))}
-          onKeyDown={({ detail }) => {
-            if (detail.key === 'Enter') saveCell(entity, 'name', editCell.value);
-            if (detail.key === 'Escape') setEditCell(null);
-          }}
-          onBlur={() => saveCell(entity, 'name', editCell.value)}
-        />
-      );
-    }
-    return (
-      <span
-        style={{ cursor: readonly ? 'default' : 'text', borderBottom: readonly ? 'none' : '1px dashed var(--color-border-divider-default, #ccc)' }}
-        onClick={() => !readonly && setEditCell({ key: entity.logical_key, field: 'name', value: entity.name || '' })}
-      >
-        {entity.name || '—'}
-      </span>
-    );
-  }
-
-  /* inline editable cell — importance */
-  function CellImportance({ entity }) {
-    const editing = editCell?.key === entity.logical_key && editCell?.field === 'importance';
-    if (editing) {
-      return (
-        <CSSelect
-          selectedOption={IMPORTANCE_OPTIONS.find((o) => o.value === String(editCell.value)) || null}
-          options={IMPORTANCE_OPTIONS}
-          onChange={({ detail }) => saveCell(entity, 'importance', detail.selectedOption.value)}
-          onBlur={() => setEditCell(null)}
-        />
-      );
-    }
-    return (
-      <span
-        style={{ cursor: readonly ? 'default' : 'pointer', borderBottom: readonly ? 'none' : '1px dashed var(--color-border-divider-default, #ccc)' }}
-        onClick={() => !readonly && setEditCell({ key: entity.logical_key, field: 'importance', value: String(entity.importance ?? 3) })}
-      >
-        {entity.importance ?? '—'}
-      </span>
-    );
-  }
-
-  /* inline editable cell — parent */
-  function CellParent({ entity }) {
-    const editing = editCell?.key === entity.logical_key && editCell?.field === 'parent_logical_key';
-    const parentName = entity.parent_logical_key ? (entityMap[entity.parent_logical_key]?.name || entity.parent_logical_key) : '—';
-    if (editing) {
-      const curOpt = parentOptions.find((o) => o.value === (editCell.value || '')) || parentOptions[0];
-      return (
-        <CSSelect
-          selectedOption={curOpt}
-          options={parentOptions}
-          onChange={({ detail }) => saveCell(entity, 'parent_logical_key', detail.selectedOption.value || null)}
-          onBlur={() => setEditCell(null)}
-        />
-      );
-    }
-    return (
-      <span
-        style={{ cursor: readonly ? 'default' : 'pointer', borderBottom: readonly ? 'none' : '1px dashed var(--color-border-divider-default, #ccc)' }}
-        onClick={() => !readonly && setEditCell({ key: entity.logical_key, field: 'parent_logical_key', value: entity.parent_logical_key || '' })}
-      >
-        {parentName}
-      </span>
-    );
-  }
-
-  /* inline delete confirmation row */
-  function DeleteConfirmRow({ entity }) {
-    if (confirmDelete !== entity.logical_key) {
-      return (
-        <CSButton
-          variant="inline-link"
-          iconName="remove"
-          disabled={readonly}
-          onClick={() => setConfirmDelete(entity.logical_key)}
-        >
-          {t('common.delete')}
-        </CSButton>
-      );
-    }
-    return (
-      <CSSpaceBetween direction="horizontal" size="xs">
-        <CSStatusIndicator type="warning">{t('scripts.edit.canon.confirm_delete')}</CSStatusIndicator>
-        <CSButton variant="inline-link" iconName="check" onClick={() => doDelete(entity.logical_key)}>
-          {t('common.confirm')}
-        </CSButton>
-        <CSButton variant="inline-link" iconName="close" onClick={() => setConfirmDelete(null)}>
-          {t('common.cancel')}
-        </CSButton>
-      </CSSpaceBetween>
-    );
-  }
-
-  /* ---- detail panel ---- */
-  function DetailPanel({ entity }) {
-    const children = childrenOf(entity.logical_key);
-    const parent = entity.parent_logical_key ? entityMap[entity.parent_logical_key] : null;
-    const detailVal = (field) => (field in detailEdit ? detailEdit[field] : entity[field]);
-    const setDF = (field, val) => setDetailEdit((d) => ({ ...d, [field]: val }));
-    const isDirty = Object.keys(detailEdit).length > 0;
-
-    const aliases = detailVal('aliases');
-    const aliasTokens = Array.isArray(aliases)
-      ? aliases.map((a) => ({ label: a, dismissLabel: `Remove ${a}` }))
-      : [];
-
-    return (
-      <CSSpaceBetween size="m">
-        {readonly && (
-          <CSAlert type="info" header={t('scripts.edit.readonly_title')}>{t('scripts.edit.readonly_body')}</CSAlert>
-        )}
-
-        <CSKeyValuePairs columns={2} items={[
-          { label: t('scripts.edit.canon.field_logical_key'), value: <span className="mono">{entity.logical_key}</span> },
-          { label: t('scripts.edit.canon.field_type'), value: <CSBadge color={typeBadgeColor(entity.type)}>{t(`scripts.edit.canon.type_${entity.type}`) || entity.type}</CSBadge> },
-          { label: t('scripts.edit.canon.field_subtype'), value: entity.entity_subtype || '—' },
-          { label: t('scripts.edit.canon.field_importance'), value: entity.importance ?? '—' },
-          { label: t('scripts.edit.canon.field_first_chapter'), value: entity.first_revealed_chapter ?? '—' },
-        ]} />
-
-        <CSFormField label={t('scripts.edit.canon.field_name')}>
-          <CSInput disabled={readonly} value={detailVal('name') || ''} onChange={({ detail }) => setDF('name', detail.value)} />
-        </CSFormField>
-
-        <CSFormField label={t('scripts.edit.canon.field_identity')}>
-          <CSInput disabled={readonly} value={detailVal('identity') || ''} onChange={({ detail }) => setDF('identity', detail.value)} />
-        </CSFormField>
-
-        <CSFormField label={t('scripts.edit.canon.field_summary')}>
-          <CSTextarea disabled={readonly} rows={3} value={detailVal('summary') || ''} onChange={({ detail }) => setDF('summary', detail.value)} />
-        </CSFormField>
-
-        <CSFormField label={t('scripts.edit.canon.field_background')}>
-          <CSTextarea disabled={readonly} rows={4} value={detailVal('background') || ''} onChange={({ detail }) => setDF('background', detail.value)} />
-        </CSFormField>
-
-        <CSFormField label={t('scripts.edit.canon.field_aliases')}>
-          <CSTokenGroup
-            readOnly={readonly}
-            items={aliasTokens}
-            onDismiss={({ detail }) => {
-              const updated = aliasTokens.filter((_, i) => i !== detail.itemIndex).map((t) => t.label);
-              setDF('aliases', updated);
-            }}
-            i18nStrings={{ removeButtonAriaLabel: (t) => `Remove ${t.label}` }}
-          />
-          {!readonly && (
-            <div style={{ marginTop: 6 }}>
-              <AddAliasInput
-                onAdd={(alias) => {
-                  const current = Array.isArray(detailVal('aliases')) ? detailVal('aliases') : (Array.isArray(entity.aliases) ? entity.aliases : []);
-                  if (alias && !current.includes(alias)) setDF('aliases', [...current, alias]);
-                }}
-              />
-            </div>
-          )}
-        </CSFormField>
-
-        {/* Tree view: parent → entity → children */}
-        <CSExpandableSection headerText={t('scripts.edit.canon.tree_view')} defaultExpanded={false}>
-          <CSSpaceBetween size="xs">
-            {parent && (
-              <div style={{ paddingLeft: 0 }}>
-                <CSBox fontSize="body-s" color="text-body-secondary">
-                  ↑ {t('scripts.edit.canon.parent')}: <strong>{parent.name || parent.logical_key}</strong>
-                  {parent.entity_subtype ? ` (${parent.entity_subtype})` : ''}
-                </CSBox>
-              </div>
-            )}
-            <div style={{ paddingLeft: 16, borderLeft: '2px solid var(--color-border-divider-default, #ccc)' }}>
-              <CSBox fontWeight="bold">{entity.name || entity.logical_key}</CSBox>
-              <CSBox fontSize="body-s" color="text-body-secondary">
-                {t(`scripts.edit.canon.type_${entity.type}`) || entity.type}
-                {entity.entity_subtype ? ` · ${entity.entity_subtype}` : ''}
-              </CSBox>
-            </div>
-            {children.length > 0 && (
-              <div style={{ paddingLeft: 32 }}>
-                <CSBox fontSize="body-s" color="text-body-secondary">
-                  ↓ {t('scripts.edit.canon.children')} ({children.length}):
-                </CSBox>
-                {children.map((ch) => (
-                  <div key={ch.logical_key} style={{ paddingLeft: 8 }}>
-                    <CSBox fontSize="body-s">
-                      • <strong>{ch.name || ch.logical_key}</strong>
-                      {ch.entity_subtype ? ` (${ch.entity_subtype})` : ''}
-                    </CSBox>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CSSpaceBetween>
-        </CSExpandableSection>
-
-        {!readonly && isDirty && (
-          <CSSpaceBetween direction="horizontal" size="xs">
-            <CSButton variant="primary" loading={savingDetail} onClick={saveDetail}>
-              {t('common.save')}
-            </CSButton>
-            <CSButton variant="link" onClick={() => setDetailEdit({})}>
-              {t('common.cancel')}
-            </CSButton>
-          </CSSpaceBetween>
-        )}
-      </CSSpaceBetween>
-    );
-  }
-
-  /* ---- new entity add row form ---- */
-  function AddEntityForm() {
-    return (
-      <div style={{ padding: '12px 16px', background: 'var(--color-background-container-content)', border: '1px solid var(--color-border-container-top)', borderRadius: 8, marginBottom: 8 }}>
-        <CSBox variant="h3" padding={{ bottom: 's' }}>{t('scripts.edit.canon.add_title')}</CSBox>
-        <CSSpaceBetween direction="horizontal" size="s">
-          <CSFormField label={t('scripts.edit.canon.field_logical_key')}>
-            <CSInput
-              placeholder={t('scripts.edit.canon.field_logical_key_ph')}
-              value={newForm.logical_key}
-              onChange={({ detail }) => setNewForm((f) => ({ ...f, logical_key: detail.value }))}
-            />
-          </CSFormField>
-          <CSFormField label={t('scripts.edit.canon.field_name')}>
-            <CSInput
-              placeholder={t('scripts.edit.canon.field_name_ph')}
-              value={newForm.name}
-              onChange={({ detail }) => setNewForm((f) => ({ ...f, name: detail.value }))}
-            />
-          </CSFormField>
-          <CSFormField label={t('scripts.edit.canon.field_type')}>
-            <CSSelect
-              selectedOption={ENTITY_TYPES.map((tp) => ({ value: tp, label: t(`scripts.edit.canon.type_${tp}`) })).find((o) => o.value === newForm.type) || null}
-              options={ENTITY_TYPES.map((tp) => ({ value: tp, label: t(`scripts.edit.canon.type_${tp}`) }))}
-              onChange={({ detail }) => setNewForm((f) => ({ ...f, type: detail.selectedOption.value }))}
-            />
-          </CSFormField>
-          <CSFormField label={t('scripts.edit.canon.field_subtype')}>
-            <CSInput
-              placeholder={t('script_canon.subtype_ph')}
-              value={newForm.entity_subtype}
-              onChange={({ detail }) => setNewForm((f) => ({ ...f, entity_subtype: detail.value }))}
-            />
-          </CSFormField>
-          <CSFormField label={t('scripts.edit.canon.field_importance')}>
-            <CSSelect
-              selectedOption={IMPORTANCE_OPTIONS.find((o) => o.value === newForm.importance) || IMPORTANCE_OPTIONS[2]}
-              options={IMPORTANCE_OPTIONS}
-              onChange={({ detail }) => setNewForm((f) => ({ ...f, importance: detail.selectedOption.value }))}
-            />
-          </CSFormField>
-        </CSSpaceBetween>
-        <CSFormField label={t('scripts.edit.canon.field_summary')}>
-          <CSInput
-            placeholder={t('scripts.edit.canon.field_summary_ph')}
-            value={newForm.summary}
-            onChange={({ detail }) => setNewForm((f) => ({ ...f, summary: detail.value }))}
-          />
-        </CSFormField>
-        <div style={{ marginTop: 10 }}>
-          <CSSpaceBetween direction="horizontal" size="xs">
-            <CSButton variant="primary" iconName="add-plus" onClick={submitAdd}>{t('scripts.edit.canon.add_confirm')}</CSButton>
-            <CSButton variant="link" onClick={() => { setAdding(false); setNewForm({ logical_key: '', name: '', type: 'character', entity_subtype: '', importance: '3', summary: '' }); }}>
-              {t('common.cancel')}
-            </CSButton>
-          </CSSpaceBetween>
-        </div>
-      </div>
-    );
-  }
-
   /* ---- column definitions ---- */
   const columns = [
     {
       id: 'name',
       header: t('scripts.edit.canon.col_name'),
-      cell: (e) => <CellName entity={e} />,
+      cell: (e) => (
+        <CellName
+          entity={e}
+          editValue={editValueFor(e, 'name')}
+          readonly={readonly}
+          onStartEdit={startEdit}
+          onEditChange={changeEdit}
+          onCancelEdit={cancelEdit}
+          onSave={saveCell}
+        />
+      ),
       sortingField: 'name',
     },
     {
@@ -535,12 +410,32 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
     {
       id: 'parent',
       header: t('scripts.edit.canon.col_parent'),
-      cell: (e) => <CellParent entity={e} />,
+      cell: (e) => (
+        <CellParent
+          entity={e}
+          editValue={editValueFor(e, 'parent_logical_key')}
+          readonly={readonly}
+          parentName={e.parent_logical_key ? (entityMap[e.parent_logical_key]?.name || e.parent_logical_key) : '—'}
+          items={items}
+          onStartEdit={startEdit}
+          onCancelEdit={cancelEdit}
+          onSave={saveCell}
+        />
+      ),
     },
     {
       id: 'importance',
       header: t('scripts.edit.canon.col_importance'),
-      cell: (e) => <CellImportance entity={e} />,
+      cell: (e) => (
+        <CellImportance
+          entity={e}
+          editValue={editValueFor(e, 'importance')}
+          readonly={readonly}
+          onStartEdit={startEdit}
+          onCancelEdit={cancelEdit}
+          onSave={saveCell}
+        />
+      ),
     },
     {
       id: 'summary',
@@ -555,11 +450,18 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
           <CSButton
             variant="inline-link"
             iconName="search"
-            onClick={() => { setSelected(e); setDetailEdit({}); setSplitOpen(true); }}
+            onClick={() => openDetail(e)}
           >
             {t('scripts.edit.canon.view_detail')}
           </CSButton>
-          <DeleteConfirmRow entity={e} />
+          <DeleteConfirmRow
+            entity={e}
+            confirming={confirmDelete === e.logical_key}
+            readonly={readonly}
+            onAsk={askDelete}
+            onConfirm={doDelete}
+            onCancel={cancelDelete}
+          />
         </CSSpaceBetween>
       ),
     },
@@ -571,13 +473,13 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
       variant="container"
       loading={loading}
       loadingText={t('scripts.edit.canon.loading')}
-      items={filtered}
+      items={paged}
       trackBy="logical_key"
       selectionType="single"
       selectedItems={selected ? [selected] : []}
       onSelectionChange={({ detail }) => {
         const e = detail.selectedItems[0];
-        if (e) { setSelected(e); setDetailEdit({}); setSplitOpen(true); }
+        if (e) openDetail(e);
       }}
       columnDefinitions={columns}
       header={
@@ -615,6 +517,15 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
           />
         </CSSpaceBetween>
       }
+      pagination={
+        pageCount > 1 ? (
+          <CSPagination
+            currentPageIndex={curPage}
+            pagesCount={pageCount}
+            onChange={({ detail }) => setPage(detail.currentPageIndex)}
+          />
+        ) : undefined
+      }
       empty={
         <CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>
           {query ? t('scripts.edit.canon.empty_search') : t('scripts.edit.canon.empty')}
@@ -630,17 +541,211 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
           {t('scripts.edit.readonly_body')}
         </CSAlert>
       )}
-      {adding && !readonly && <AddEntityForm />}
+      {adding && !readonly && (
+        <AddEntityForm newForm={newForm} setNewForm={setNewForm} onSubmit={submitAdd} onCancel={cancelAdd} />
+      )}
       <DetailDrawer
         open={splitOpen && !!selected}
         title={selected?.name || selected?.logical_key || ''}
         onClose={() => { setSelected(null); setSplitOpen(false); }}
         closeLabel={t('common.close')}
       >
-        {selected && <DetailPanel entity={selected} />}
+        {selected && (
+          <DetailPanel
+            entity={selected}
+            readonly={readonly}
+            parent={selected.parent_logical_key ? entityMap[selected.parent_logical_key] : null}
+            childEntities={items.filter((e) => e.parent_logical_key === selected.logical_key)}
+            detailEdit={detailEdit}
+            setDetailEdit={setDetailEdit}
+            savingDetail={savingDetail}
+            onSave={saveDetail}
+          />
+        )}
       </DetailDrawer>
       {tableEl}
     </CSSpaceBetween>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Detail panel (module level)                                          */
+/* ------------------------------------------------------------------ */
+function DetailPanel({ entity, readonly, parent, childEntities, detailEdit, setDetailEdit, savingDetail, onSave }) {
+  const { t } = useTranslation();
+  const detailVal = (field) => (field in detailEdit ? detailEdit[field] : entity[field]);
+  const setDF = (field, val) => setDetailEdit((d) => ({ ...d, [field]: val }));
+  const isDirty = Object.keys(detailEdit).length > 0;
+
+  const aliases = detailVal('aliases');
+  const aliasTokens = Array.isArray(aliases)
+    ? aliases.map((a) => ({ label: a, dismissLabel: `Remove ${a}` }))
+    : [];
+
+  return (
+    <CSSpaceBetween size="m">
+      {readonly && (
+        <CSAlert type="info" header={t('scripts.edit.readonly_title')}>{t('scripts.edit.readonly_body')}</CSAlert>
+      )}
+
+      <CSKeyValuePairs columns={2} items={[
+        { label: t('scripts.edit.canon.field_logical_key'), value: <span className="mono">{entity.logical_key}</span> },
+        { label: t('scripts.edit.canon.field_type'), value: <CSBadge color={typeBadgeColor(entity.type)}>{t(`scripts.edit.canon.type_${entity.type}`) || entity.type}</CSBadge> },
+        { label: t('scripts.edit.canon.field_subtype'), value: entity.entity_subtype || '—' },
+        { label: t('scripts.edit.canon.field_importance'), value: entity.importance ?? '—' },
+        { label: t('scripts.edit.canon.field_first_chapter'), value: entity.first_revealed_chapter ?? '—' },
+      ]} />
+
+      <CSFormField label={t('scripts.edit.canon.field_name')}>
+        <CSInput disabled={readonly} value={detailVal('name') || ''} onChange={({ detail }) => setDF('name', detail.value)} />
+      </CSFormField>
+
+      <CSFormField label={t('scripts.edit.canon.field_identity')}>
+        <CSInput disabled={readonly} value={detailVal('identity') || ''} onChange={({ detail }) => setDF('identity', detail.value)} />
+      </CSFormField>
+
+      <CSFormField label={t('scripts.edit.canon.field_summary')}>
+        <CSTextarea disabled={readonly} rows={3} value={detailVal('summary') || ''} onChange={({ detail }) => setDF('summary', detail.value)} />
+      </CSFormField>
+
+      <CSFormField label={t('scripts.edit.canon.field_background')}>
+        <CSTextarea disabled={readonly} rows={4} value={detailVal('background') || ''} onChange={({ detail }) => setDF('background', detail.value)} />
+      </CSFormField>
+
+      <CSFormField label={t('scripts.edit.canon.field_aliases')}>
+        <CSTokenGroup
+          readOnly={readonly}
+          items={aliasTokens}
+          onDismiss={({ detail }) => {
+            const updated = aliasTokens.filter((_, i) => i !== detail.itemIndex).map((tk) => tk.label);
+            setDF('aliases', updated);
+          }}
+          i18nStrings={{ removeButtonAriaLabel: (tk) => `Remove ${tk.label}` }}
+        />
+        {!readonly && (
+          <div style={{ marginTop: 6 }}>
+            <AddAliasInput
+              onAdd={(alias) => {
+                const current = Array.isArray(detailVal('aliases')) ? detailVal('aliases') : (Array.isArray(entity.aliases) ? entity.aliases : []);
+                if (alias && !current.includes(alias)) setDF('aliases', [...current, alias]);
+              }}
+            />
+          </div>
+        )}
+      </CSFormField>
+
+      {/* Tree view: parent → entity → children */}
+      <CSExpandableSection headerText={t('scripts.edit.canon.tree_view')} defaultExpanded={false}>
+        <CSSpaceBetween size="xs">
+          {parent && (
+            <div style={{ paddingLeft: 0 }}>
+              <CSBox fontSize="body-s" color="text-body-secondary">
+                ↑ {t('scripts.edit.canon.parent')}: <strong>{parent.name || parent.logical_key}</strong>
+                {parent.entity_subtype ? ` (${parent.entity_subtype})` : ''}
+              </CSBox>
+            </div>
+          )}
+          <div style={{ paddingLeft: 16, borderLeft: '2px solid var(--color-border-divider-default, #ccc)' }}>
+            <CSBox fontWeight="bold">{entity.name || entity.logical_key}</CSBox>
+            <CSBox fontSize="body-s" color="text-body-secondary">
+              {t(`scripts.edit.canon.type_${entity.type}`) || entity.type}
+              {entity.entity_subtype ? ` · ${entity.entity_subtype}` : ''}
+            </CSBox>
+          </div>
+          {childEntities.length > 0 && (
+            <div style={{ paddingLeft: 32 }}>
+              <CSBox fontSize="body-s" color="text-body-secondary">
+                ↓ {t('scripts.edit.canon.children')} ({childEntities.length}):
+              </CSBox>
+              {childEntities.map((ch) => (
+                <div key={ch.logical_key} style={{ paddingLeft: 8 }}>
+                  <CSBox fontSize="body-s">
+                    • <strong>{ch.name || ch.logical_key}</strong>
+                    {ch.entity_subtype ? ` (${ch.entity_subtype})` : ''}
+                  </CSBox>
+                </div>
+              ))}
+            </div>
+          )}
+        </CSSpaceBetween>
+      </CSExpandableSection>
+
+      {!readonly && isDirty && (
+        <CSSpaceBetween direction="horizontal" size="xs">
+          <CSButton variant="primary" loading={savingDetail} onClick={onSave}>
+            {t('common.save')}
+          </CSButton>
+          <CSButton variant="link" onClick={() => setDetailEdit({})}>
+            {t('common.cancel')}
+          </CSButton>
+        </CSSpaceBetween>
+      )}
+    </CSSpaceBetween>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* New entity add row form (module level)                               */
+/* ------------------------------------------------------------------ */
+function AddEntityForm({ newForm, setNewForm, onSubmit, onCancel }) {
+  const { t } = useTranslation();
+  const typeOptions = ENTITY_TYPES.map((tp) => ({ value: tp, label: t(`scripts.edit.canon.type_${tp}`) }));
+  return (
+    <div style={{ padding: '12px 16px', background: 'var(--color-background-container-content)', border: '1px solid var(--color-border-container-top)', borderRadius: 8, marginBottom: 8 }}>
+      <CSBox variant="h3" padding={{ bottom: 's' }}>{t('scripts.edit.canon.add_title')}</CSBox>
+      <CSSpaceBetween direction="horizontal" size="s">
+        <CSFormField label={t('scripts.edit.canon.field_logical_key')}>
+          <CSInput
+            placeholder={t('scripts.edit.canon.field_logical_key_ph')}
+            value={newForm.logical_key}
+            onChange={({ detail }) => setNewForm((f) => ({ ...f, logical_key: detail.value }))}
+          />
+        </CSFormField>
+        <CSFormField label={t('scripts.edit.canon.field_name')}>
+          <CSInput
+            placeholder={t('scripts.edit.canon.field_name_ph')}
+            value={newForm.name}
+            onChange={({ detail }) => setNewForm((f) => ({ ...f, name: detail.value }))}
+          />
+        </CSFormField>
+        <CSFormField label={t('scripts.edit.canon.field_type')}>
+          <CSSelect
+            selectedOption={typeOptions.find((o) => o.value === newForm.type) || null}
+            options={typeOptions}
+            onChange={({ detail }) => setNewForm((f) => ({ ...f, type: detail.selectedOption.value }))}
+          />
+        </CSFormField>
+        <CSFormField label={t('scripts.edit.canon.field_subtype')}>
+          <CSInput
+            placeholder={t('script_canon.subtype_ph')}
+            value={newForm.entity_subtype}
+            onChange={({ detail }) => setNewForm((f) => ({ ...f, entity_subtype: detail.value }))}
+          />
+        </CSFormField>
+        <CSFormField label={t('scripts.edit.canon.field_importance')}>
+          <CSSelect
+            selectedOption={IMPORTANCE_OPTIONS.find((o) => o.value === newForm.importance) || IMPORTANCE_OPTIONS[2]}
+            options={IMPORTANCE_OPTIONS}
+            onChange={({ detail }) => setNewForm((f) => ({ ...f, importance: detail.selectedOption.value }))}
+          />
+        </CSFormField>
+      </CSSpaceBetween>
+      <CSFormField label={t('scripts.edit.canon.field_summary')}>
+        <CSInput
+          placeholder={t('scripts.edit.canon.field_summary_ph')}
+          value={newForm.summary}
+          onChange={({ detail }) => setNewForm((f) => ({ ...f, summary: detail.value }))}
+        />
+      </CSFormField>
+      <div style={{ marginTop: 10 }}>
+        <CSSpaceBetween direction="horizontal" size="xs">
+          <CSButton variant="primary" iconName="add-plus" onClick={onSubmit}>{t('scripts.edit.canon.add_confirm')}</CSButton>
+          <CSButton variant="link" onClick={onCancel}>
+            {t('common.cancel')}
+          </CSButton>
+        </CSSpaceBetween>
+      </div>
+    </div>
   );
 }
 

@@ -24,7 +24,9 @@ async function loadRow(kind, sid, id) {
     return r?.card ?? r ?? {};
   }
   if (kind === 'worldbook') {
-    // fetch_all:默认只回第一页 50 条,之后的条目在这里找不到 → 打开是空白。
+    // 按 id 读单条:以前为了打开一条要拉整个剧本的世界书(还带着向量列,上千条就是十几 MB)。
+    if (A.scripts.worldbookGet) { const r = await A.scripts.worldbookGet(sid, id); return r?.entry ?? r ?? {}; }
+    // 兜底(老 api-client):全量列表里找(fetch_all,默认第一页 50 条之后的条目找不到)。
     const r = await A.scripts.worldbook(sid, { fetch_all: true });
     const arr = r?.entries || r?.items || (Array.isArray(r) ? r : []);
     return arr.find((x) => String(x.id) === String(id)) || {};
