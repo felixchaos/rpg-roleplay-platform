@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Icon } from '../icons.jsx';
 import { SetGroup, MSlider, Toggle, usePrefSave } from './shared.jsx';
+import { toIntSetting, storedIntSetting } from '../../lib/int-setting.js';
 
 /* ────────────────────────────────────────────────────────────────── */
 /* SECTION: 记忆 (memory)                                              */
@@ -15,9 +16,22 @@ function MemorySection() {
   const [tokenBudget, setTokenBudget] = useState(800);
   const [autoArchive, setAutoArchive] = useState(50);
   const [pinnedMax, setPinnedMax] = useState(20);
+  // 固定记忆上限是自由输入框:清空 / 非数字失焦时回显最近一次的有效值
+  const lastPinned = useRef(20);
+  const setPinnedValid = (n) => { lastPinned.current = n; setPinnedMax(n); };
   const [bucketPinned, setBucketPinned] = useState(true);
   const [bucketWorld, setBucketWorld] = useState(true);
   const [bucketChar, setBucketChar] = useState(true);
+
+  // 数值项按后端口径(MemorySettings 全是 int):保存前取整并夹到区间,回显取整后的值;
+  // 读回来的非整数老数据后端不认、实际用默认值,这里也保持默认值显示(与桌面同一个 lib/int-setting.js)。
+  const loadInt = (raw, setter) => { const n = storedIntSetting(raw); if (n !== null) setter(n); };
+  const commitInt = (key, raw, min, max, setter, fallback) => {
+    const n = toIntSetting(raw, min, max);
+    if (n === null) { setter(fallback); return; }
+    setter(n);
+    save(key, n);
+  };
 
   const loadOr = (p, nk, ok) => {
     if (p[nk]!==undefined && p[nk]!==null) return p[nk];
@@ -32,14 +46,11 @@ function MemorySection() {
         const r = await window.api.account.profile();
         if (cancelled) return;
         const p = (r && r.preferences) || {};
-        const rd = loadOr(p, 'memory.recall_depth', 'settings.召回深度');
-        if (rd !== undefined) setRecallDepth(Number(rd));
-        const sw = loadOr(p, 'memory.summary_window', 'settings.摘要窗口');
-        if (sw !== undefined) setSummaryWindow(Number(sw));
-        const pm = loadOr(p, 'memory.pinned_max', 'settings.固定记忆上限');
-        if (pm !== undefined) setPinnedMax(Number(pm));
-        if (p['memory.token_budget'] !== undefined) setTokenBudget(Number(p['memory.token_budget']));
-        if (p['memory.auto_archive_after_turns'] !== undefined) setAutoArchive(Number(p['memory.auto_archive_after_turns']));
+        loadInt(loadOr(p, 'memory.recall_depth', 'settings.召回深度'), setRecallDepth);
+        loadInt(loadOr(p, 'memory.summary_window', 'settings.摘要窗口'), setSummaryWindow);
+        loadInt(loadOr(p, 'memory.pinned_max', 'settings.固定记忆上限'), setPinnedValid);
+        loadInt(p['memory.token_budget'], setTokenBudget);
+        loadInt(p['memory.auto_archive_after_turns'], setAutoArchive);
         if (typeof p['memory.bucket_pinned_enabled'] === 'boolean') setBucketPinned(p['memory.bucket_pinned_enabled']);
         if (typeof p['memory.bucket_world_enabled'] === 'boolean') setBucketWorld(p['memory.bucket_world_enabled']);
         if (typeof p['memory.bucket_character_enabled'] === 'boolean') setBucketChar(p['memory.bucket_character_enabled']);
@@ -56,7 +67,7 @@ function MemorySection() {
             value={recallDepth} min={2} max={20} step={1}
             onChange={(v) => setRecallDepth(v)} />
           <button className="pl-btn-ghost" style={{ height:36, fontSize:13 }}
-            onClick={() => { const n=Math.max(2,Math.min(20,recallDepth)); save('recall_depth',n); }}>
+            onClick={() => commitInt('recall_depth', recallDepth, 2, 20, setRecallDepth, recallDepth)}>
             <Icon name="save" size={14} /> {t('common.save')}
           </button>
         </div>
@@ -65,7 +76,7 @@ function MemorySection() {
             value={summaryWindow} min={3} max={20} step={1}
             onChange={(v) => setSummaryWindow(v)} />
           <button className="pl-btn-ghost" style={{ height:36, fontSize:13 }}
-            onClick={() => { const n=Math.max(3,Math.min(20,summaryWindow)); save('summary_window',n); }}>
+            onClick={() => commitInt('summary_window', summaryWindow, 3, 20, setSummaryWindow, summaryWindow)}>
             <Icon name="save" size={14} /> {t('common.save')}
           </button>
         </div>
@@ -74,7 +85,7 @@ function MemorySection() {
             value={tokenBudget} min={200} max={2000} step={50}
             onChange={(v) => setTokenBudget(v)} />
           <button className="pl-btn-ghost" style={{ height:36, fontSize:13 }}
-            onClick={() => { const n=Math.max(200,Math.min(2000,tokenBudget)); save('token_budget',n); }}>
+            onClick={() => commitInt('token_budget', tokenBudget, 200, 2000, setTokenBudget, tokenBudget)}>
             <Icon name="save" size={14} /> {t('common.save')}
           </button>
         </div>
@@ -83,7 +94,7 @@ function MemorySection() {
             value={autoArchive} min={10} max={200} step={5}
             onChange={(v) => setAutoArchive(v)} />
           <button className="pl-btn-ghost" style={{ height:36, fontSize:13 }}
-            onClick={() => { const n=Math.max(10,Math.min(200,autoArchive)); save('auto_archive_after_turns',n); }}>
+            onClick={() => commitInt('auto_archive_after_turns', autoArchive, 10, 200, setAutoArchive, autoArchive)}>
             <Icon name="save" size={14} /> {t('common.save')}
           </button>
         </div>
@@ -94,8 +105,8 @@ function MemorySection() {
           <div className="pl-setrow-tx"><strong>{t('mobile.settings.memory.pinned_max')}</strong><span>{t('mobile.settings.memory.pinned_max_desc')}</span></div>
           <input
             type="number" min={5} max={100} value={pinnedMax}
-            onChange={(e) => setPinnedMax(Number(e.target.value))}
-            onBlur={(e) => { const n=Math.max(5,Math.min(100,Number(e.target.value))); setPinnedMax(n); save('pinned_max',n); }}
+            onChange={(e) => setPinnedMax(e.target.value)}
+            onBlur={(e) => commitInt('pinned_max', e.target.value, 5, 100, setPinnedValid, lastPinned.current)}
             style={{ width:72, fontSize:15, textAlign:'center', padding:'6px', border:'1px solid var(--line)', borderRadius:8, background:'var(--bg-deep)', color:'var(--text)' }}
           />
         </div>

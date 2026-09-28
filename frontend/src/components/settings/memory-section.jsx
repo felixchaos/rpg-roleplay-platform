@@ -4,6 +4,7 @@ import { useState as useStatePL, useEffect as useEffectPL } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAutoSave } from '../../platform-app.jsx';
 import { SetGroup, SetRow } from './shared.jsx';
+import { toIntSetting, storedIntSetting } from '../../lib/int-setting.js';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
 import CSInput from '@cloudscape-design/components/input';
 import CSToggle from '@cloudscape-design/components/toggle';
@@ -27,6 +28,24 @@ function MemorySection() {
   const [bucketWorldEnabled, setBucketWorldEnabled] = useStatePL(true);
   const [bucketCharacterEnabled, setBucketCharacterEnabled] = useStatePL(true);
 
+  // 数值项保存前一律取整并夹到界面区间,输入框回显取整后的值(后端 MemorySettings 全是 int,
+  // 非整数整项丢弃、回落默认值:以前照存 7.5,页面显示 7.5、GM 用的却是默认值)。
+  // committed = 最近一次生效的值:清空 / 填了非数字后失焦,回显它,不保存。
+  const committed = React.useRef({ recall_depth: 5, summary_window: 10, token_budget: 800, auto_archive_after_turns: 50, pinned_max: 20 });
+  const commitInt = (key, raw, min, max, setter) => {
+    const n = toIntSetting(raw, min, max);
+    if (n === null) { setter(committed.current[key]); return; }
+    setter(n);
+    if (n !== committed.current[key]) { committed.current[key] = n; save(key, n); }
+  };
+  // 读到的值同样按后端口径:不是整数(老数据里的 7.5)后端不认、用的是默认值,这里也显示默认值。
+  const loadInt = (key, raw, setter) => {
+    const n = storedIntSetting(raw);
+    if (n === null) return;
+    committed.current[key] = n;
+    setter(n);
+  };
+
   // A6.2: loadOrFallback — 读新 key 优先,不存在再读旧 key
   const loadOrFallback = (p, newKey, oldKey) => {
     if (p[newKey] !== undefined && p[newKey] !== null) return p[newKey];
@@ -42,16 +61,13 @@ function MemorySection() {
         if (cancelled) return;
         const p = (r && r.preferences) || {};
         // A6.2: 读新 key，兼容旧中文 key
-        const rd = loadOrFallback(p, "memory.recall_depth", "settings.召回深度");
-        if (rd !== undefined) setRecallDepth(Number(rd));
-        const sw = loadOrFallback(p, "memory.summary_window", "settings.摘要窗口");
-        if (sw !== undefined) setSummaryWindow(Number(sw));
+        loadInt("recall_depth", loadOrFallback(p, "memory.recall_depth", "settings.召回深度"), setRecallDepth);
+        loadInt("summary_window", loadOrFallback(p, "memory.summary_window", "settings.摘要窗口"), setSummaryWindow);
         // pinned_max 同时对应旧 "settings.固定记忆上限"
-        const pm = loadOrFallback(p, "memory.pinned_max", "settings.固定记忆上限");
-        if (pm !== undefined) setPinnedMax(Number(pm));
+        loadInt("pinned_max", loadOrFallback(p, "memory.pinned_max", "settings.固定记忆上限"), setPinnedMax);
         // 新字段 — 无旧 key
-        if (p["memory.token_budget"] !== undefined) setTokenBudget(Number(p["memory.token_budget"]));
-        if (p["memory.auto_archive_after_turns"] !== undefined) setAutoArchiveAfter(Number(p["memory.auto_archive_after_turns"]));
+        loadInt("token_budget", p["memory.token_budget"], setTokenBudget);
+        loadInt("auto_archive_after_turns", p["memory.auto_archive_after_turns"], setAutoArchiveAfter);
         if (typeof p["memory.bucket_pinned_enabled"] === "boolean") setBucketPinnedEnabled(p["memory.bucket_pinned_enabled"]);
         if (typeof p["memory.bucket_world_enabled"] === "boolean") setBucketWorldEnabled(p["memory.bucket_world_enabled"]);
         if (typeof p["memory.bucket_character_enabled"] === "boolean") setBucketCharacterEnabled(p["memory.bucket_character_enabled"]);
@@ -68,12 +84,12 @@ function MemorySection() {
           <div style={{display: "flex", alignItems: "center", gap: 8}}>
             <input type="range" min={2} max={20} step={1} value={recallDepth}
               onChange={(e) => setRecallDepth(Number(e.target.value))}
-              onMouseUp={(e) => { const n = Number(e.target.value); if (n >= 2 && n <= 20) save("recall_depth", n); }}
-              onTouchEnd={(e) => { const n = Number(e.target.value); if (n >= 2 && n <= 20) save("recall_depth", n); }}
+              onMouseUp={(e) => commitInt("recall_depth", e.target.value, 2, 20, setRecallDepth)}
+              onTouchEnd={(e) => commitInt("recall_depth", e.target.value, 2, 20, setRecallDepth)}
               style={{flex: 1, minWidth: 120}} />
             <input type="number" min={2} max={20} step={1} value={recallDepth}
-              onChange={(e) => setRecallDepth(Number(e.target.value))}
-              onBlur={(e) => { const n = Number(e.target.value); if (n >= 2 && n <= 20) save("recall_depth", n); }}
+              onChange={(e) => setRecallDepth(e.target.value)}
+              onBlur={(e) => commitInt("recall_depth", e.target.value, 2, 20, setRecallDepth)}
               className="mono" style={{width: 70, textAlign: "right"}} />
           </div>
         </SetRow>
@@ -81,12 +97,12 @@ function MemorySection() {
           <div style={{display: "flex", alignItems: "center", gap: 8}}>
             <input type="range" min={3} max={20} step={1} value={summaryWindow}
               onChange={(e) => setSummaryWindow(Number(e.target.value))}
-              onMouseUp={(e) => { const n = Number(e.target.value); if (n >= 3 && n <= 20) save("summary_window", n); }}
-              onTouchEnd={(e) => { const n = Number(e.target.value); if (n >= 3 && n <= 20) save("summary_window", n); }}
+              onMouseUp={(e) => commitInt("summary_window", e.target.value, 3, 20, setSummaryWindow)}
+              onTouchEnd={(e) => commitInt("summary_window", e.target.value, 3, 20, setSummaryWindow)}
               style={{flex: 1, minWidth: 120}} />
             <input type="number" min={3} max={20} step={1} value={summaryWindow}
-              onChange={(e) => setSummaryWindow(Number(e.target.value))}
-              onBlur={(e) => { const n = Number(e.target.value); if (n >= 3 && n <= 20) save("summary_window", n); }}
+              onChange={(e) => setSummaryWindow(e.target.value)}
+              onBlur={(e) => commitInt("summary_window", e.target.value, 3, 20, setSummaryWindow)}
               className="mono" style={{width: 70, textAlign: "right"}} />
           </div>
         </SetRow>
@@ -94,12 +110,12 @@ function MemorySection() {
           <div style={{display: "flex", alignItems: "center", gap: 8}}>
             <input type="range" min={200} max={2000} step={50} value={tokenBudget}
               onChange={(e) => setTokenBudget(Number(e.target.value))}
-              onMouseUp={(e) => { const n = Number(e.target.value); if (n >= 200 && n <= 2000) save("token_budget", n); }}
-              onTouchEnd={(e) => { const n = Number(e.target.value); if (n >= 200 && n <= 2000) save("token_budget", n); }}
+              onMouseUp={(e) => commitInt("token_budget", e.target.value, 200, 2000, setTokenBudget)}
+              onTouchEnd={(e) => commitInt("token_budget", e.target.value, 200, 2000, setTokenBudget)}
               style={{flex: 1, minWidth: 120}} />
             <input type="number" min={200} max={2000} step={50} value={tokenBudget}
-              onChange={(e) => setTokenBudget(Number(e.target.value))}
-              onBlur={(e) => { const n = Number(e.target.value); if (n >= 200 && n <= 2000) save("token_budget", n); }}
+              onChange={(e) => setTokenBudget(e.target.value)}
+              onBlur={(e) => commitInt("token_budget", e.target.value, 200, 2000, setTokenBudget)}
               className="mono" style={{width: 70, textAlign: "right"}} />
           </div>
         </SetRow>
@@ -107,12 +123,12 @@ function MemorySection() {
           <div style={{display: "flex", alignItems: "center", gap: 8}}>
             <input type="range" min={10} max={200} step={5} value={autoArchiveAfter}
               onChange={(e) => setAutoArchiveAfter(Number(e.target.value))}
-              onMouseUp={(e) => { const n = Number(e.target.value); if (n >= 10 && n <= 200) save("auto_archive_after_turns", n); }}
-              onTouchEnd={(e) => { const n = Number(e.target.value); if (n >= 10 && n <= 200) save("auto_archive_after_turns", n); }}
+              onMouseUp={(e) => commitInt("auto_archive_after_turns", e.target.value, 10, 200, setAutoArchiveAfter)}
+              onTouchEnd={(e) => commitInt("auto_archive_after_turns", e.target.value, 10, 200, setAutoArchiveAfter)}
               style={{flex: 1, minWidth: 120}} />
             <input type="number" min={10} max={200} step={5} value={autoArchiveAfter}
-              onChange={(e) => setAutoArchiveAfter(Number(e.target.value))}
-              onBlur={(e) => { const n = Number(e.target.value); if (n >= 10 && n <= 200) save("auto_archive_after_turns", n); }}
+              onChange={(e) => setAutoArchiveAfter(e.target.value)}
+              onBlur={(e) => commitInt("auto_archive_after_turns", e.target.value, 10, 200, setAutoArchiveAfter)}
               className="mono" style={{width: 70, textAlign: "right"}} />
           </div>
         </SetRow>
@@ -124,9 +140,14 @@ function MemorySection() {
           <CSInput type="number" value={String(pinnedMax)}
             onChange={({ detail }) => {
               setPinnedMax(detail.value);
-              const n = Number(detail.value);
-              if (detail.value !== '' && n >= 5 && n <= 100) save("pinned_max", n);
-            }} />
+              // 边输边存(老行为),存的是取整后的值;区间外的先不存,失焦时再夹到区间里并回显。
+              const r = Math.round(Number(detail.value));
+              if (detail.value !== '' && r >= 5 && r <= 100 && r !== committed.current.pinned_max) {
+                committed.current.pinned_max = r;
+                save("pinned_max", r);
+              }
+            }}
+            onBlur={() => commitInt("pinned_max", pinnedMax, 5, 100, setPinnedMax)} />
         </SetRow>
         <SetRow label={t('settings.memory.bucket_pinned')} description={t('settings.memory.bucket_pinned_desc')}>
           <CSToggle checked={bucketPinnedEnabled}
