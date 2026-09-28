@@ -178,6 +178,19 @@ async def api_canon_update(
             return json_response({"ok": False, "error": _NOT_FOUND}, status_code=404)
 
         before = dict(before_row)
+        # 改名 / 改类型撞上已有的同名同类型实体 → 与新建同口径拒绝(否则 GM 读到两份)。
+        if "name" in fields or "type" in fields:
+            new_name = fields.get("name", before.get("name"))
+            new_type = fields.get("type", before.get("type"))
+            dup = find_same_name_canon(db, script_id, new_name, new_type, exclude_key=logical_key)
+            if dup:
+                return json_response({
+                    "ok": False,
+                    "error": (f"本剧本已经有同名的{_type_label(new_type)}「{dup['name']}」"
+                              f"(logical_key: {dup['logical_key']}),这样改会和它重复。"
+                              f"如果本来就是同一个,请在知识库复核里把两条合并"),
+                    "existing_logical_key": dup["logical_key"],
+                }, status_code=409)
         sets, args = [], []
         for col, val in fields.items():
             if col == "attrs":

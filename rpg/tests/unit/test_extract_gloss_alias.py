@@ -73,10 +73,13 @@ def test_merge_gloss_used_in_concept_aggregation_across_chapters():
     应包含第50章补充的机制信息(旧版 first-gloss-wins 会永远锁死第1章那句)。
     """
     class _FakeDB:
-        def execute(self, *a, **kw):
+        # 查询一律查不到;insert … returning 返回一行(resolve_and_write 只统计真正写入的实体)
+        def execute(self, sql="", *a, **kw):
+            is_insert = str(sql).lstrip().lower().startswith("insert")
+
             class _Cur:
                 def fetchone(self_inner):
-                    return None
+                    return {"id": 1} if is_insert else None
             return _Cur()
 
     exs = [

@@ -618,7 +618,8 @@ def resolve_and_write(db, script_id: int, chapter_extracts: list, *, embedder=No
 
     written = 0
     for c in canon:
-        canon_repo.upsert_canon_entity(
+        # 返回 None = 被编辑器保护跳过(已有同名同类型的编辑器实体,或同 key 行是编辑器写的),不计数
+        row = canon_repo.upsert_canon_entity(
             db, script_id, c.logical_key, name=c.name, type=c.type, aliases=c.aliases,
             summary=c.summary, first_revealed_chapter=c.first_revealed_chapter,
             public_knowledge=(c.importance > public_threshold and c.first_revealed_chapter == 1),
@@ -630,7 +631,8 @@ def resolve_and_write(db, script_id: int, chapter_extracts: list, *, embedder=No
             identity=c.identity,
             background=c.background,
         )
-        written += 1
+        if row is not None:
+            written += 1
     # 名字 / 别名可能变了:本进程的别名归并缓存作废(其它 worker 靠缓存 TTL 自愈,见 kb.alias)。
     from kb.alias import invalidate_alias_cache
     invalidate_alias_cache(script_id)

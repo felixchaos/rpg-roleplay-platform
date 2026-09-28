@@ -171,6 +171,25 @@ def test_extraction_does_not_duplicate_editor_entity_with_legacy_key(env):
     assert _row(env, "奉天城_location")["summary"] == "用户写的"
 
 
+def test_resolve_and_write_counts_only_rows_actually_written(env):
+    """被编辑器保护而跳过的实体不计入 entities_written(之前每条都 +1,报告数偏高)。"""
+    from extract.per_chapter import ChapterExtract
+    from extract.resolve import resolve_and_write
+    _insert(env, "奉天城_location", "奉天城", "location", editor=True, summary="用户写的")
+    _insert(env, "萧炎", "萧炎", "character", editor=True, summary="用户写的")
+    exs = [ChapterExtract(chapter=1, entities=[
+        {"canonical_guess": "奉天城", "surface": "奉天城", "type": "location"},
+        {"canonical_guess": "萧炎", "surface": "萧炎", "type": "character"},
+        {"canonical_guess": "药尘", "surface": "药尘", "type": "character"},
+    ], concepts=[])]
+    with env["connect"]() as db:
+        r = resolve_and_write(db, env["sid"], exs, embedder=None)
+        db.commit()
+    assert r["entities_written"] == 1, r
+    assert _row(env, "药尘") is not None
+    assert _row(env, "萧炎")["summary"] == "用户写的"
+
+
 def test_rebuild_does_not_duplicate_editor_entity(env):
     from psycopg.types.json import Jsonb
 
@@ -229,6 +248,37 @@ def test_agent_create_same_name_and_type_points_to_existing(env):
 
 
 # ── 1.2 世界书列表不带向量列 + 单条读取 ──────────────────────────────────────
+
+def test_rename_onto_same_name_and_type_is_rejected(env):
+    """改名 / 改类型撞上已有的同名同类型实体,和新建一样拒绝并指向那条(否则 GM 读到两份)。"""
+    c, sid = env["client"], env["sid"]
+    _insert(env, "纳兰嫣然", "纳兰嫣然", "character", summary="正主")
+    _insert(env, "嫣然", "嫣然", "character", summary="重复的")
+    r = c.put(f"/api/scripts/{sid}/canon-entities/嫣然", json={"name": "纳兰嫣然"})
+    assert r.status_code == 409, r.text
+    assert r.json()["existing_logical_key"] == "纳兰嫣然"
+    assert _row(env, "嫣然")["name"] == "嫣然"
+    # 名字不变、只改摘要不受影响;改回自己的名字也不算撞
+    r = c.put(f"/api/scripts/{sid}/canon-entities/嫣然", json={"name": "嫣然", "summary": "改了摘要"})
+    assert r.status_code == 200, r.text
+    # 改类型撞上:同名的势力已存在
+    _insert(env, "萧家", "萧家", "faction")
+    _insert(env, "萧家_loc", "萧家", "location")
+    r = c.put(f"/api/scripts/{sid}/canon-entities/萧家_loc", json={"type": "faction"})
+    assert r.status_code == 409, r.text
+    assert r.json()["existing_logical_key"] == "萧家"
+
+
+def test_agent_rename_onto_same_name_and_type_is_rejected(env):
+    from tools_dsl.command_tools_script_write.canon import _t_upsert_canon_entity
+    _insert(env, "美杜莎", "美杜莎", "character", summary="正主")
+    _insert(env, "彩鳞", "彩鳞", "character")
+    out = _t_upsert_canon_entity(env["uid"], env["sid"], {"logical_key": "彩鳞", "name": "美杜莎"}, None)
+    assert out.startswith("失败") and "美杜莎" in out, out
+    assert _row(env, "彩鳞")["name"] == "彩鳞"
+    out = _t_upsert_canon_entity(env["uid"], env["sid"], {"logical_key": "彩鳞", "summary": "蛇人族女王"}, None)
+    assert not out.startswith("失败"), out
+
 
 def _wb_create(env, title, sid=None):
     r = env["client"].post(f"/api/scripts/{sid or env['sid']}/worldbook",

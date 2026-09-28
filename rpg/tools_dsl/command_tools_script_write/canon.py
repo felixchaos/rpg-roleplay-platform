@@ -84,12 +84,21 @@ def _t_upsert_canon_entity(user_id: int, script_id: int | None, args: dict, stat
             existing = None
             if logical_key:
                 existing = db.execute(
-                    "select id from kb_canon_entities where script_id = %s and logical_key = %s",
+                    "select id, name, type from kb_canon_entities where script_id = %s and logical_key = %s",
                     (sid, logical_key),
                 ).fetchone()
 
             if existing:
                 # ── 更新 ──
+                # 改名 / 改类型撞上已有的同名同类型实体 → 与新建、REST PUT 同口径拒绝。
+                new_name = str(args["name"]).strip() if args.get("name") is not None else existing["name"]
+                new_type = entity_type or existing["type"]
+                if new_name != existing["name"] or new_type != existing["type"]:
+                    dup = find_same_name_canon(db, sid, new_name, new_type, exclude_key=logical_key)
+                    if dup:
+                        return (f"失败: 剧本 #{sid} 已有同名同类型实体「{dup['name']}」"
+                                f"(logical_key={dup['logical_key']}),这样改会和它重复;"
+                                f"要改那一条请带它的 logical_key")
                 sets, params = [], []
                 for col in ("name", "full_name", "type", "summary", "identity",
                             "background", "entity_subtype", "parent_logical_key"):
