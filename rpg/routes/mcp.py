@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from platform_app.api._deps import json_response, value_error_response
@@ -195,7 +195,9 @@ async def api_admin_tool_usage(
     save_id = qp.get("save_id")
     limit = int(qp.get("limit", "30"))
 
-    where = ["ts >= now() - interval '%s hours'"]
+    # 占位符不能写进字符串字面量(`interval '%s hours'`):psycopg3 走服务端绑定,字面量里的 $1
+    # 不会被替换,PG 把 '$1 hours' 当成 1 小时 → window_hours 传多少都只统计最近 1 小时。
+    where = ["ts >= now() - %s * interval '1 hour'"]
     params: list[Any] = [window_hours]
     if user_id:
         where.append("user_id = %s")
