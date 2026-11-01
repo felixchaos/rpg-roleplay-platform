@@ -63,4 +63,20 @@ describe('api-client basics', () => {
       window.fetch = originalFetch;
     }
   });
+
+  it.each([
+    [undefined, false], [false, false], [true, true], ['false', false], [1, false],
+  ])('library deletion only sends explicit boolean confirmation (%j)', async (confirmation, expected) => {
+    const originalFetch = window.fetch;
+    window.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, deleted: true }), {
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    try {
+      await window.api.library.deleteAsset(123, confirmation);
+      expect(window.fetch.mock.calls[0][0]).toMatch(/\/api\/library\/asset\/123\/delete$/);
+      expect(JSON.parse(window.fetch.mock.calls[0][1].body)).toEqual({ confirm: expected });
+    } finally {
+      window.fetch = originalFetch;
+    }
+  });
 });

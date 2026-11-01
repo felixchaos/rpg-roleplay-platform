@@ -507,11 +507,18 @@ export type LibraryAsset = {
   [k: string]: unknown;
 };
 
+export type LibraryDeleteResult = {
+  ok: boolean;
+  deleted?: boolean;
+  needs_confirm?: boolean;
+  references?: { kind: string; id: string | number; name?: string; title?: string }[];
+};
+
 export const library = {
   list: (kind?: string) => http.get<{ ok: boolean; items?: LibraryAsset[] }>(`/api/library`, kind ? { kind } : undefined),
   get: (id: string | number) => http.get<{ ok: boolean; asset?: LibraryAsset }>(`/api/library/asset/${encodeURIComponent(String(id))}`),
   downloadUrl: async (id: string | number) => (await baseUrl()) + `/api/library/asset/${encodeURIComponent(String(id))}/download`,
-  remove: (id: string | number) => http.post<{ ok: boolean }>(`/api/library/asset/${encodeURIComponent(String(id))}/delete`, { confirm: true }),
+  remove: (id: string | number, confirm = false) => http.post<LibraryDeleteResult>(`/api/library/asset/${encodeURIComponent(String(id))}/delete`, { confirm: confirm === true }),
 };
 
 export const apparatus = {

@@ -105,7 +105,7 @@ async def api_library_download(asset_id: int, user=Depends(require_user)):
 async def api_library_delete_asset(asset_id: int, request: Request, user=Depends(require_user)):
     """删除资产（含引用检查 + 二次确认 + 置空引用 + force 删）。
 
-    request body（可选）: {"confirm": true}
+    request body（可选）: {"confirm": true}，只有 JSON 布尔 true 才确认解除引用。
 
     返回：
       {ok: false, needs_confirm: true, references: [...]}  — 有引用且未 confirm
@@ -113,12 +113,15 @@ async def api_library_delete_asset(asset_id: int, request: Request, user=Depends
       {ok: false, error: "not_found"}                      — 不存在或无权
     """
     body: dict = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
+    if await request.body():
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象") from None
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
 
-    confirm = bool(body.get("confirm", False))
+    confirm = body.get("confirm") is True
     result = _library.delete_asset_with_refs(user["id"], asset_id, confirm=confirm)
     status = 200
     if not result.get("ok") and result.get("error") == "not_found":

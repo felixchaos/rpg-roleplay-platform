@@ -58,19 +58,30 @@ export default function ReliquaryScreen() {
 
   const banish = (asset: LibraryAsset) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    Alert.alert("销毁此物", "确定从图库移除？若它正被剧本或角色卡引用，删除可能失败。", [
+    const remove = async (confirm: boolean) => {
+      try {
+        const result = await library.remove(asset.id, confirm);
+        if (result?.ok === false && result.needs_confirm === true) {
+          const kinds: Record<string, string> = { avatar: "头像", cover: "剧本封面", card_avatar: "角色卡头像", persona_image: "人设图" };
+          const refs = (result.references || []).map(ref => `${kinds[ref.kind] || ref.kind}#${ref.id}`).join("、");
+          Alert.alert("此素材正在被引用", `删除会解除以下引用，且无法撤销：${refs}`, [
+            { text: "取消", style: "cancel" },
+            { text: "仍然销毁", style: "destructive", onPress: () => remove(true) },
+          ]);
+          return;
+        }
+        if (result?.ok !== true || result.deleted !== true) throw new Error("删除未完成，请重试");
+        await load();
+      } catch (e) {
+        Alert.alert("无法删除", e instanceof Error ? e.message : "请重试");
+      }
+    };
+    Alert.alert("销毁此物", "确定从图库移除？此操作无法撤销。", [
       { text: "取消", style: "cancel" },
       {
         text: "销毁",
         style: "destructive",
-        onPress: async () => {
-          try {
-            await library.remove(asset.id);
-            load();
-          } catch (e) {
-            Alert.alert("无法删除", e instanceof ApiError ? e.message : "请重试");
-          }
-        },
+        onPress: () => remove(false),
       },
     ]);
   };

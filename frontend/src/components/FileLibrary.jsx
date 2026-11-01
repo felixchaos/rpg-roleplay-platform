@@ -122,6 +122,10 @@ function DeleteConfirmModal({ open, asset, references, onCancel, onConfirm, busy
     script:  t('components.file_library.ref_kind.script'),
     user:    t('components.file_library.ref_kind.user'),
     persona: t('components.file_library.ref_kind.persona'),
+    avatar: t('components.file_library.ref_kind.user'),
+    cover: t('components.file_library.ref_kind.script'),
+    card_avatar: t('components.file_library.ref_kind.card'),
+    persona_image: t('components.file_library.ref_kind.persona'),
   };
   const refText = (references || []).map(r => {
     return `${refKindMap[r.kind] || r.kind}#${r.id}`;
@@ -246,8 +250,8 @@ export default function FileLibrary() {
   const [deleteState, setDeleteState] = React.useState(null);
   // deleteState 格式:
   //   { asset, phase: 'first'|'confirm', references: [] }
-  //   phase=first: 尚未调用 deleteAsset(id)(无 confirm)
-  //   phase=confirm: 收到 needs_confirm 或无引用时准备二次确认
+  //   phase=first: 先让用户确认,再调 deleteAsset(id, false)
+  //   phase=confirm: 收到 needs_confirm 后展示引用警告,等用户再次确认
   const [deleteBusy, setDeleteBusy] = React.useState(false);
 
   // ── 加载列表 ─────────────────────────────────────────────
@@ -292,55 +296,30 @@ export default function FileLibrary() {
     if (!deleteBusy) setDeleteState(null);
   };
 
-  // phase=first: 先调一次不带 confirm 的 deleteAsset,拿到 needs_confirm 或直接成功
+  // phase=first: 用户确认后调 confirm=false,拿到 needs_confirm 或直接删除无引用资产
   // phase=confirm: 用户点了弹窗里的「确认删除」,带 confirm=true 再调一次
   const handleDeleteConfirm = async () => {
     if (!deleteState || deleteBusy) return;
     const { asset, phase } = deleteState;
 
-    if (phase === 'first') {
-      // 第一次调:探测引用(后端有引用时返回 needs_confirm,无引用时直接删或返 ok)
-      setDeleteBusy(true);
-      try {
-        const r = await window.api?.library?.deleteAsset(asset.id);
-        if (r && r.ok === false && r.needs_confirm) {
-          // 有引用 → 进二次确认弹窗
-          setDeleteState({ asset, phase: 'confirm', references: r.references || [] });
-        } else if (r && r.ok) {
-          // 无引用 → 后端已删(或返回 ok) → 进二次确认(设计要求:无引用也弹轻量确认)
-          // 此分支: 后端已删了(r.deleted=true)就直接移除;否则进二次确认
-          if (r.deleted) {
-            setAssets(prev => prev.filter(a => a.id !== asset.id));
-            setDeleteState(null);
-            window.toast?.(t('components.file_library.toast.deleted', { name: asset.name || '#' + asset.id }), { kind: 'ok', duration: 2400 });
-          } else {
-            // 后端返回 ok 但 deleted 未标(可能要前端再确认一次)
-            setDeleteState({ asset, phase: 'confirm', references: [] });
-          }
-        } else {
-          // 未知响应,也进弹窗让用户决策
-          setDeleteState({ asset, phase: 'confirm', references: [] });
-        }
-      } catch (e) {
-        window.toast?.(e?.message || t('components.file_library.toast.delete_failed'), { kind: 'danger', duration: 3000 });
-        setDeleteState(null);
-      } finally {
-        setDeleteBusy(false);
+    setDeleteBusy(true);
+    try {
+      const r = await window.api?.library?.deleteAsset(asset.id, phase === 'confirm');
+      if (r?.ok === false && r.needs_confirm === true) {
+        setDeleteState({ asset, phase: 'confirm', references: r.references || [] });
+        return;
       }
-    } else {
-      // phase=confirm: 用户在弹窗点了确认,调带 confirm=true 的接口
-      setDeleteBusy(true);
-      try {
-        await window.api?.library?.deleteAsset(asset.id, true);
-        setAssets(prev => prev.filter(a => a.id !== asset.id));
-        setDeleteState(null);
-        window.toast?.(t('components.file_library.toast.deleted', { name: asset.name || '#' + asset.id }), { kind: 'ok', duration: 2400 });
-      } catch (e) {
-        window.toast?.(e?.message || t('components.file_library.toast.delete_failed'), { kind: 'danger', duration: 3000 });
-        setDeleteState(null);
-      } finally {
-        setDeleteBusy(false);
+      if (r?.ok !== true || r.deleted !== true) {
+        throw new Error(t('components.file_library.toast.delete_failed'));
       }
+      setAssets(prev => prev.filter(a => a.id !== asset.id));
+      setDeleteState(null);
+      window.toast?.(t('components.file_library.toast.deleted', { name: asset.name || '#' + asset.id }), { kind: 'ok', duration: 2400 });
+    } catch (e) {
+      window.toast?.(e?.message || t('components.file_library.toast.delete_failed'), { kind: 'danger', duration: 3000 });
+      setDeleteState(null);
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -438,9 +417,9 @@ export default function FileLibrary() {
         )}
       </CSSpaceBetween>
 
-      {/* 删除确认弹窗(phase=confirm 时才显示) */}
+      {/* 初次确认和引用警告都必须可见,否则 first 阶段无法发起删除。 */}
       <DeleteConfirmModal
-        open={!!(deleteState && deleteState.phase === 'confirm')}
+        open={!!deleteState}
         asset={deleteState?.asset}
         references={deleteState?.references}
         onCancel={handleDeleteCancel}
